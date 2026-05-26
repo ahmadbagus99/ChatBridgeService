@@ -1,0 +1,21 @@
+using ChatBridgeService.Services;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddScoped<IMetaWebhookParser, MetaWebhookParser>();
+builder.Services.AddHttpClient<ICreatioForwarder, CreatioForwarder>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddHttpClient<IMetaMessageSender, MetaMessageSender>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+
+var app = builder.Build();
+
+app.UseRouting();
+app.MapControllers();
+
+app.Run();
