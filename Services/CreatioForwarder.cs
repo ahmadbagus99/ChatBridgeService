@@ -8,6 +8,8 @@ namespace ChatBridgeService.Services;
 public interface ICreatioForwarder
 {
     Task ForwardAsync(IncomingMessage message, CancellationToken ct = default);
+    Task<string> GetMessagesAsync(string conversationId, CancellationToken ct = default);
+    Task<string> AgentReplyAsync(string phoneNumber, string message, CancellationToken ct = default);
 }
 
 public class CreatioForwarder : ICreatioForwarder
@@ -45,28 +47,48 @@ public class CreatioForwarder : ICreatioForwarder
             ReceivedAt = message.ReceivedAt
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-        };
-
-        if (!string.IsNullOrEmpty(_authCookie))
-            request.Headers.Add("Cookie", _authCookie);
-
-        if (!string.IsNullOrEmpty(_bpmCsrf))
-            request.Headers.Add("BPMCSRF", _bpmCsrf);
-
-        var response = await _http.SendAsync(request, ct);
-
+        var response = await PostToCreatioAsync(endpoint, payload, ct);
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(ct);
             _logger.LogError("Creatio forward failed {Status}: {Body}", response.StatusCode, body);
-
-            // Reset auth cookie jika unauthorized, akan re-auth pada request berikutnya
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 _authCookie = null;
         }
+    }
+
+    public async Task<string> GetMessagesAsync(string conversationId, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(ct);
+        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
+        string endpoint = $"{baseUrl}/0/rest/ChatBridgeAgentService/GetMessages";
+
+        var response = await PostToCreatioAsync(endpoint, new { ConversationId = conversationId }, ct);
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    public async Task<string> AgentReplyAsync(string phoneNumber, string message, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(ct);
+        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
+        string endpoint = $"{baseUrl}/0/rest/ChatBridgeAgentService/Reply";
+
+        var response = await PostToCreatioAsync(endpoint, new { phoneNumber, message }, ct);
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    private async Task<HttpResponseMessage> PostToCreatioAsync(string endpoint, object payload, CancellationToken ct)
+    {
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        content.Headers.ContentType!.CharSet = null; // WCF rejects charset=utf-8
+
+        var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+        if (!string.IsNullOrEmpty(_authCookie))
+            request.Headers.Add("Cookie", _authCookie);
+        if (!string.IsNullOrEmpty(_bpmCsrf))
+            request.Headers.Add("BPMCSRF", _bpmCsrf);
+
+        return await _http.SendAsync(request, ct);
     }
 
     private async Task EnsureAuthenticatedAsync(CancellationToken ct)
@@ -79,7 +101,7 @@ public class CreatioForwarder : ICreatioForwarder
 
         var loginPayload = new { UserName = username, UserPassword = password };
         var loginContent = new StringContent(JsonSerializer.Serialize(loginPayload), Encoding.UTF8, "application/json");
-        loginContent.Headers.ContentType!.CharSet = null; // WCF rejects charset=utf-8
+        loginContent.Headers.ContentType!.CharSet = null;
         var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/ServiceModel/AuthService.svc/Login")
         {
             Content = loginContent

@@ -15,6 +15,12 @@ builder.Services.AddHttpClient<IMetaMessageSender, MetaMessageSender>(client =>
 
 var app = builder.Build();
 
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers["Content-Security-Policy"] = "frame-ancestors *";
+    await next();
+});
+
 app.UseRouting();
 app.MapControllers();
 
