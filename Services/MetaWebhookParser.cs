@@ -5,6 +5,7 @@ namespace ChatBridgeService.Services;
 public interface IMetaWebhookParser
 {
     IEnumerable<IncomingMessage> Parse(MetaWebhookPayload payload);
+    IEnumerable<MessageStatusUpdate> ParseStatuses(MetaWebhookPayload payload);
 }
 
 public class MetaWebhookParser : IMetaWebhookParser
@@ -62,6 +63,35 @@ public class MetaWebhookParser : IMetaWebhookParser
                 }
 
                 yield return incoming;
+            }
+        }
+    }
+
+    public IEnumerable<MessageStatusUpdate> ParseStatuses(MetaWebhookPayload payload)
+    {
+        if (payload.Object != "whatsapp_business_account")
+            yield break;
+
+        foreach (var entry in payload.Entry)
+        foreach (var change in entry.Changes)
+        {
+            if (change.Field != "messages") continue;
+
+            foreach (var status in change.Value.Statuses)
+            {
+                string? errorMsg = status.Errors.Count > 0
+                    ? $"[{status.Errors[0].Code}] {status.Errors[0].Title}: {status.Errors[0].Message}"
+                    : null;
+
+                yield return new MessageStatusUpdate
+                {
+                    MetaMessageId = status.Id,
+                    Status = status.Status,
+                    RecipientPhone = status.RecipientId,
+                    Timestamp = DateTimeOffset.FromUnixTimeSeconds(
+                        long.TryParse(status.Timestamp, out var ts) ? ts : 0).UtcDateTime,
+                    ErrorMessage = errorMsg
+                };
             }
         }
     }

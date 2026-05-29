@@ -7,6 +7,8 @@ namespace ChatBridgeService.Services;
 public interface ICreatioForwarder
 {
     Task ForwardAsync(CreatioInstance instance, IncomingMessage message, CancellationToken ct = default);
+    Task ForwardStatusAsync(CreatioInstance instance, MessageStatusUpdate status, CancellationToken ct = default);
+    Task SetMetaMessageIdAsync(CreatioInstance instance, string phoneNumber, string message, string metaMessageId, CancellationToken ct = default);
     Task<string> GetMessagesAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default);
     Task<string> AgentReplyAsync(CreatioInstance instance, string phoneNumber, string message, CancellationToken ct = default);
 }
@@ -58,6 +60,51 @@ public class CreatioForwarder : ICreatioForwarder
         {
             await _log.LogAsync(instance.Id, "webhook_in", message.From, true,
                 $"[{message.Type}] {message.TextBody?[..Math.Min(200, message.TextBody?.Length ?? 0)]}", ct);
+        }
+    }
+
+    public async Task SetMetaMessageIdAsync(CreatioInstance instance, string phoneNumber, string message, string metaMessageId, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/SetMetaMessageId";
+
+        var response = await PostToCreatioAsync(instance, endpoint, new
+        {
+            PhoneNumber = phoneNumber,
+            Message = message,
+            MetaMessageId = metaMessageId
+        }, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogWarning("SetMetaMessageId failed {Status}: {Body}", response.StatusCode, body);
+        }
+    }
+
+    public async Task ForwardStatusAsync(CreatioInstance instance, MessageStatusUpdate status, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/UpdateStatus";
+
+        var payload = new
+        {
+            MetaMessageId = status.MetaMessageId,
+            Status = status.Status,
+            RecipientPhone = status.RecipientPhone,
+            Timestamp = status.Timestamp,
+            ErrorMessage = status.ErrorMessage
+        };
+
+        var response = await PostToCreatioAsync(instance, endpoint, payload, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            string body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogWarning("ForwardStatus failed {Status}: {Body}", response.StatusCode, body);
+        }
+        else
+        {
+            _logger.LogInformation("Status {Status} for MetaMsg {Id} forwarded to Creatio", status.Status, status.MetaMessageId);
         }
     }
 

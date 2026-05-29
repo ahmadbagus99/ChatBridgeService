@@ -1,3 +1,4 @@
+using ChatBridgeService.Models;
 using ChatBridgeService.Services;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
@@ -9,12 +10,14 @@ public class ChatController : ControllerBase
 {
     private readonly IInstanceService _instances;
     private readonly ICreatioForwarder _creatio;
+    private readonly IMetaMessageSender _meta;
     private readonly ILogger<ChatController> _logger;
 
-    public ChatController(IInstanceService instances, ICreatioForwarder creatio, ILogger<ChatController> logger)
+    public ChatController(IInstanceService instances, ICreatioForwarder creatio, IMetaMessageSender meta, ILogger<ChatController> logger)
     {
         _instances = instances;
         _creatio = creatio;
+        _meta = meta;
         _logger = logger;
     }
 
@@ -67,21 +70,61 @@ public class ChatController : ControllerBase
             if (string.IsNullOrWhiteSpace(body.PhoneNumber) || string.IsNullOrWhiteSpace(body.Message))
                 return Ok(new { success = false, error = "phoneNumber and message are required" });
 
+            // 1. Save to Creatio
             var json = await _creatio.AgentReplyAsync(instance, body.PhoneNumber, body.Message, ct);
-            try
-            {
-                JsonDocument.Parse(json);
-                return Content(json, "application/json");
-            }
+            try { JsonDocument.Parse(json); }
             catch
             {
                 _logger.LogError("AgentReply: Creatio return non-JSON for instance {Name}: {Body}", instance.Name, json[..Math.Min(300, json.Length)]);
                 return Ok(new { success = false, error = $"Creatio error: {json[..Math.Min(100, json.Length)]}" });
             }
+
+            // 2. Send to WhatsApp via Meta
+            var sendResult = await _meta.SendTextAsync(instance, new SendTextRequest
+            {
+                To = body.PhoneNumber,
+                Body = body.Message
+            }, ct);
+
+            if (!sendResult.Success)
+            {
+                _logger.LogWarning("AgentReply: saved to Creatio but Meta send failed for instance {Name}: {Error}", instance.Name, sendResult.Error);
+            }
+            else if (!string.IsNullOrEmpty(sendResult.MetaMessageId))
+            {
+                // 3. Update Creatio with metaMessageId — use CancellationToken.None karena request sudah selesai
+                _ = _creatio.SetMetaMessageIdAsync(instance, body.PhoneNumber, body.Message, sendResult.MetaMessageId, CancellationToken.None);
+            }
+
+            return Ok(new { success = true, metaMessageId = sendResult.MetaMessageId, metaError = sendResult.Success ? null : sendResult.Error });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "AgentReply error for instance {Name}", instance.Name);
+            return Ok(new { success = false, error = ex.Message });
+        }
+    }
+
+    // Retry sending to Meta only — message already saved in Creatio
+    [HttpPost("api/{apiKey}/retry-send")]
+    public async Task<IActionResult> RetrySend(string apiKey, [FromBody] AgentReplyDto body, CancellationToken ct)
+    {
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return Ok(new { success = false, error = "Instance not found" });
+
+        try
+        {
+            var sendResult = await _meta.SendTextAsync(instance, new SendTextRequest
+            {
+                To = body.PhoneNumber,
+                Body = body.Message
+            }, ct);
+
+            return Ok(new { success = sendResult.Success, metaMessageId = sendResult.MetaMessageId, error = sendResult.Error });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "RetrySend error for instance {Name}", instance.Name);
             return Ok(new { success = false, error = ex.Message });
         }
     }
@@ -115,6 +158,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   word-break:break-word;box-shadow:0 1px 2px rgba(0,0,0,.13)}
 .bubble.C{background:#fff;border-radius:0 10px 10px 10px}
 .bubble.B,.bubble.A{background:#D9FDD3;border-radius:10px 0 10px 10px}
+.bubble.FAIL{background:#ffe5e5;border-radius:10px 0 10px 10px;border:1px solid #ffb3b3}
+.fail-bar{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:#c00}
+.retry-btn{background:none;border:none;color:#c00;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;padding:0}
+.status-icon{font-size:11px;margin-left:4px}
+.status-sent{color:#aaa}
+.status-delivered{color:#aaa}
+.status-read{color:#4fc3f7}
+.status-failed{color:#c00}
 .lbl{font-size:11.5px;font-weight:700;margin-bottom:2px}
 .bubble.C .lbl{color:#075E54}
 .bubble.B .lbl,.bubble.A .lbl{color:#128C7E}
@@ -153,26 +204,66 @@ function esc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function statusIcon(metaStatus){
+  if(!metaStatus) return '';
+  if(metaStatus==='sent')      return '<span class="status-icon status-sent" title="Sent">✓</span>';
+  if(metaStatus==='delivered') return '<span class="status-icon status-delivered" title="Delivered">✓✓</span>';
+  if(metaStatus==='read')      return '<span class="status-icon status-read" title="Read">✓✓</span>';
+  if(metaStatus==='failed')    return '<span class="status-icon status-failed" title="Failed to deliver">⚠</span>';
+  return '';
+}
+
 function render(msgs){
   var el = document.getElementById('msgs');
   if(!msgs||!msgs.length){el.innerHTML='<div class="empty">No messages yet</div>';return;}
   var h='';
   msgs.forEach(function(m){
     var raw=m.message||'', time=m.createdOn||'';
+    var metaStatus=m.metaStatus||'';
+    var metaMsgId=m.metaMessageId||'';
     var type='C';
     if(raw.indexOf('[Bot]')===0)   type='B';
     if(raw.indexOf('[Agent]')===0) type='A';
     var text=raw.replace(/^\[(Customer|Bot|Agent)\]\s*/,'');
     var lbl=type==='C'?'Customer':(type==='A'?'Agent':'Bot');
     var side=(type==='B'||type==='A')?'R':'L';
-    h+='<div class="row '+side+'"><div class="bubble '+type+'">';
+    var isFailed=(type==='A'||type==='B')&&metaStatus==='failed';
+    var bubbleClass=isFailed?'FAIL':type;
+    h+='<div class="row '+side+'"><div class="bubble '+bubbleClass+'">';
     h+='<div class="lbl">'+lbl+'</div>';
     h+='<div>'+esc(text)+'</div>';
-    h+='<div class="t">'+esc(time)+'</div>';
+    h+='<div class="t">'+esc(time)+statusIcon(type!=='C'?metaStatus:'')+'</div>';
+    if(isFailed){
+      h+='<div class="fail-bar">'+
+         '<span>⚠ Not delivered</span>'+
+         '<button class="retry-btn" onclick="retryFromHistory(\''+esc(metaMsgId)+'\',\''+esc(text)+'\')">Retry</button>'+
+         '</div>';
+    }
     h+='</div></div>';
   });
   el.innerHTML=h;
   el.scrollTop=el.scrollHeight;
+}
+
+function retryFromHistory(metaMsgId, text){
+  var btns=document.querySelectorAll('.retry-btn');
+  btns.forEach(function(b){b.disabled=true;b.textContent='Sending...';});
+  fetch('/api/'+apiKey+'/retry-send',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phoneNumber:phone,message:text})
+  })
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.success){ load(); }
+    else {
+      btns.forEach(function(b){b.disabled=false;b.textContent='Retry';});
+      alert('Retry failed: '+(d.error||'unknown'));
+    }
+  })
+  .catch(function(e){
+    btns.forEach(function(b){b.disabled=false;b.textContent='Retry';});
+  });
 }
 
 function showError(msg){
@@ -212,11 +303,63 @@ function send(){
   })
   .then(function(r){return r.json();})
   .then(function(d){
-    if(d.success){inp.value='';load();}
-    else alert('Failed: '+(d.error||'unknown'));
+    if(!d.success){alert('Failed: '+(d.error||'unknown'));return;}
+    inp.value='';
+    if(d.metaError){
+      // Saved to Creatio but Meta delivery failed — show failed bubble
+      addFailedBubble(text, d.metaError);
+    } else {
+      load();
+    }
   })
   .catch(function(e){alert('Error: '+e.message);})
   .finally(function(){inp.disabled=btn.disabled=false;inp.focus();});
+}
+
+function addFailedBubble(text, errMsg){
+  var el=document.getElementById('msgs');
+  var id='fail_'+Date.now();
+  var div=document.createElement('div');
+  div.className='row R';
+  div.id=id;
+  div.innerHTML=
+    '<div class="bubble FAIL">'+
+    '<div class="lbl" style="color:#c00">Agent</div>'+
+    '<div>'+esc(text)+'</div>'+
+    '<div class="fail-bar">'+
+      '<span>⚠ Not delivered</span>'+
+      '<button class="retry-btn" onclick="retrySend(\''+id+'\',\''+esc(text)+'\')">Retry</button>'+
+    '</div>'+
+    '</div>';
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+}
+
+function retrySend(bubbleId, text){
+  var div=document.getElementById(bubbleId);
+  var retryBtn=div.querySelector('.retry-btn');
+  retryBtn.disabled=true;
+  retryBtn.textContent='Sending...';
+  fetch('/api/'+apiKey+'/retry-send',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phoneNumber:phone,message:text})
+  })
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.success){
+      div.remove();
+      load();
+    } else {
+      retryBtn.disabled=false;
+      retryBtn.textContent='Retry';
+      div.querySelector('.fail-bar span').textContent='⚠ '+( d.error||'Still failed');
+    }
+  })
+  .catch(function(e){
+    retryBtn.disabled=false;
+    retryBtn.textContent='Retry';
+  });
 }
 
 load();

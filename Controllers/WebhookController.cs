@@ -69,9 +69,10 @@ public class WebhookController : ControllerBase
         if (payload == null) return Ok();
 
         var messages = _parser.Parse(payload).ToList();
-        _logger.LogInformation("Received {Count} message(s) for instance {Name}", messages.Count, instance.Name);
+        var statuses = _parser.ParseStatuses(payload).ToList();
+        _logger.LogInformation("Received {MsgCount} message(s), {StCount} status update(s) for instance {Name}",
+            messages.Count, statuses.Count, instance.Name);
 
-        // Buat scope baru agar DbContext tidak di-dispose saat request selesai
         _ = Task.Run(async () =>
         {
             using var scope = _scopeFactory.CreateScope();
@@ -87,6 +88,18 @@ public class WebhookController : ControllerBase
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to forward message {Id}", msg.MessageId);
+                }
+            }
+
+            foreach (var st in statuses)
+            {
+                try
+                {
+                    await forwarder.ForwardStatusAsync(instance, st);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to forward status {Status} for {Id}", st.Status, st.MetaMessageId);
                 }
             }
         }, CancellationToken.None);

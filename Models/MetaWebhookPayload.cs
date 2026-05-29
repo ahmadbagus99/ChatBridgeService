@@ -108,4 +108,12 @@ public class MessageStatus
     public string Status { get; set; } = string.Empty;
     public string Timestamp { get; set; } = string.Empty;
     public string RecipientId { get; set; } = string.Empty;
+    public List<MetaStatusError> Errors { get; set; } = [];
+}
+
+public class MetaStatusError
+{
+    public int Code { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
 }
