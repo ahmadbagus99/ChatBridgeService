@@ -7,68 +7,37 @@ namespace ChatBridgeService.Controllers;
 [ApiController]
 public class ChatController : ControllerBase
 {
+    private readonly IInstanceService _instances;
     private readonly ICreatioForwarder _creatio;
     private readonly ILogger<ChatController> _logger;
 
-    public ChatController(ICreatioForwarder creatio, ILogger<ChatController> logger)
+    public ChatController(IInstanceService instances, ICreatioForwarder creatio, ILogger<ChatController> logger)
     {
+        _instances = instances;
         _creatio = creatio;
         _logger = logger;
     }
 
-    [HttpHead("chat/{conversationId}")]
-    public IActionResult HeadChat(string conversationId) => Ok();
+    [HttpHead("chat/{apiKey}/{conversationId}")]
+    public IActionResult HeadChat(string apiKey, string conversationId) => Ok();
 
-    // GET /chat/{conversationId}?phone={phoneNumber}
-    // Serve halaman HTML chat agent (WA-style bubble UI)
-    [HttpGet("chat/{conversationId}")]
-    public IActionResult ChatPage(string conversationId, [FromQuery] string phone = "")
+    [HttpGet("chat/{apiKey}/{conversationId}")]
+    public async Task<IActionResult> ChatPage(string apiKey, string conversationId, [FromQuery] string phone = "", CancellationToken ct = default)
     {
-        var html = BuildChatHtml(conversationId, phone);
-        return Content(html, "text/html; charset=utf-8");
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return NotFound("Instance not found");
+        return Content(BuildChatHtml(apiKey, conversationId, phone), "text/html; charset=utf-8");
     }
 
-    // GET /api/messages/{conversationId}
-    // Proxy ke Creatio ChatBridgeAgentService/GetMessages
-    [HttpGet("api/messages/{conversationId}")]
-    public async Task<IActionResult> GetMessages(string conversationId, CancellationToken ct)
+    [HttpGet("api/{apiKey}/messages/{conversationId}")]
+    public async Task<IActionResult> GetMessages(string apiKey, string conversationId, CancellationToken ct)
     {
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return Ok(new { success = false, error = "Instance not found" });
+
         try
         {
-            var json = await _creatio.GetMessagesAsync(conversationId, ct);
-
-            // Pastikan respons Creatio adalah JSON yang valid
-            try
-            {
-                System.Text.Json.JsonDocument.Parse(json);
-                return Content(json, "application/json");
-            }
-            catch
-            {
-                // Creatio return HTML (endpoint belum exist / belum compile)
-                _logger.LogError("GetMessages: Creatio return non-JSON: {Body}", json[..Math.Min(200, json.Length)]);
-                return Ok(new { success = false, error = "Creatio service belum siap. Pastikan ChatBridgeAgentService sudah di-compile di Creatio." });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "GetMessages error: {Id}", conversationId);
-            return Ok(new { success = false, error = ex.Message });
-        }
-    }
-
-    // POST /api/reply
-    // Proxy ke Creatio ChatBridgeAgentService/Reply
-    [HttpPost("api/reply")]
-    public async Task<IActionResult> Reply([FromBody] AgentReplyDto body, CancellationToken ct)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(body.PhoneNumber) || string.IsNullOrWhiteSpace(body.Message))
-                return Ok(new { success = false, error = "phoneNumber dan message wajib diisi" });
-
-            var json = await _creatio.AgentReplyAsync(body.PhoneNumber, body.Message, ct);
-
+            var json = await _creatio.GetMessagesAsync(instance, conversationId, ct);
             try
             {
                 JsonDocument.Parse(json);
@@ -76,25 +45,56 @@ public class ChatController : ControllerBase
             }
             catch
             {
-                _logger.LogError("AgentReply: Creatio return non-JSON: {Body}", json[..Math.Min(300, json.Length)]);
+                _logger.LogError("GetMessages: Creatio return non-JSON for instance {Name}: {Body}", instance.Name, json[..Math.Min(200, json.Length)]);
+                return Ok(new { success = false, error = "Creatio service not ready. Make sure ChatBridgeAgentService is compiled in Creatio." });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetMessages error for instance {Name}", instance.Name);
+            return Ok(new { success = false, error = ex.Message });
+        }
+    }
+
+    [HttpPost("api/{apiKey}/reply")]
+    public async Task<IActionResult> Reply(string apiKey, [FromBody] AgentReplyDto body, CancellationToken ct)
+    {
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return Ok(new { success = false, error = "Instance not found" });
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(body.PhoneNumber) || string.IsNullOrWhiteSpace(body.Message))
+                return Ok(new { success = false, error = "phoneNumber and message are required" });
+
+            var json = await _creatio.AgentReplyAsync(instance, body.PhoneNumber, body.Message, ct);
+            try
+            {
+                JsonDocument.Parse(json);
+                return Content(json, "application/json");
+            }
+            catch
+            {
+                _logger.LogError("AgentReply: Creatio return non-JSON for instance {Name}: {Body}", instance.Name, json[..Math.Min(300, json.Length)]);
                 return Ok(new { success = false, error = $"Creatio error: {json[..Math.Min(100, json.Length)]}" });
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AgentReply error");
+            _logger.LogError(ex, "AgentReply error for instance {Name}", instance.Name);
             return Ok(new { success = false, error = ex.Message });
         }
     }
 
-    private static string BuildChatHtml(string conversationId, string phoneNumber)
+    private static string BuildChatHtml(string apiKey, string conversationId, string phoneNumber)
     {
+        var safeKey   = JsonSerializer.Serialize(apiKey);
         var safeId    = JsonSerializer.Serialize(conversationId);
         var safePhone = JsonSerializer.Serialize(phoneNumber);
 
         return $$"""
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -135,17 +135,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 <body>
 <div id="header">
   <div class="avatar">💬</div>
-  <div>
-    <div id="hdr-phone" style="font-size:13px;opacity:.85"></div>
-  </div>
+  <div><div id="hdr-phone" style="font-size:13px;opacity:.85"></div></div>
 </div>
-<div id="msgs"><div class="empty">Memuat pesan...</div></div>
+<div id="msgs"><div class="empty">Loading messages...</div></div>
 <div id="status"></div>
 <div id="bar">
-  <textarea id="inp" rows="1" placeholder="Ketik pesan..." onkeydown="onKey(event)"></textarea>
+  <textarea id="inp" rows="1" placeholder="Type a message..." onkeydown="onKey(event)"></textarea>
   <button id="btn" onclick="send()">&#10148;</button>
 </div>
 <script>
+var apiKey = {{safeKey}};
 var convId = {{safeId}};
 var phone  = {{safePhone}};
 document.getElementById('hdr-phone').textContent = phone || convId;
@@ -156,7 +155,7 @@ function esc(s){
 
 function render(msgs){
   var el = document.getElementById('msgs');
-  if(!msgs||!msgs.length){el.innerHTML='<div class="empty">Belum ada pesan</div>';return;}
+  if(!msgs||!msgs.length){el.innerHTML='<div class="empty">No messages yet</div>';return;}
   var h='';
   msgs.forEach(function(m){
     var raw=m.message||'', time=m.createdOn||'';
@@ -182,20 +181,18 @@ function showError(msg){
 }
 
 function load(){
-  fetch('/api/messages/'+encodeURIComponent(convId))
+  fetch('/api/'+apiKey+'/messages/'+encodeURIComponent(convId))
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.success){
         render(d.messages);
         document.getElementById('status').textContent=
-          'Diperbarui '+new Date().toLocaleTimeString('id-ID');
+          'Updated at '+new Date().toLocaleTimeString();
       } else {
-        showError(d.error||'Gagal memuat pesan');
+        showError(d.error||'Failed to load messages');
       }
     })
-    .catch(function(e){
-      showError('Tidak dapat terhubung ke server: '+e.message);
-    });
+    .catch(function(e){ showError('Cannot connect to server: '+e.message); });
 }
 
 function onKey(e){
@@ -208,7 +205,7 @@ function send(){
   if(!text||!phone) return;
   var btn=document.getElementById('btn');
   inp.disabled=btn.disabled=true;
-  fetch('/api/reply',{
+  fetch('/api/'+apiKey+'/reply',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({phoneNumber:phone,message:text})
@@ -216,7 +213,7 @@ function send(){
   .then(function(r){return r.json();})
   .then(function(d){
     if(d.success){inp.value='';load();}
-    else alert('Gagal: '+(d.error||'unknown'));
+    else alert('Failed: '+(d.error||'unknown'));
   })
   .catch(function(e){alert('Error: '+e.message);})
   .finally(function(){inp.disabled=btn.disabled=false;inp.focus();});

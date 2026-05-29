@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using ChatBridgeService.Models;
@@ -7,33 +6,31 @@ namespace ChatBridgeService.Services;
 
 public interface ICreatioForwarder
 {
-    Task ForwardAsync(IncomingMessage message, CancellationToken ct = default);
-    Task<string> GetMessagesAsync(string conversationId, CancellationToken ct = default);
-    Task<string> AgentReplyAsync(string phoneNumber, string message, CancellationToken ct = default);
+    Task ForwardAsync(CreatioInstance instance, IncomingMessage message, CancellationToken ct = default);
+    Task<string> GetMessagesAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default);
+    Task<string> AgentReplyAsync(CreatioInstance instance, string phoneNumber, string message, CancellationToken ct = default);
 }
 
 public class CreatioForwarder : ICreatioForwarder
 {
-    private readonly HttpClient _http;
-    private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly CreatioAuthCache _authCache;
+    private readonly ILogService _log;
     private readonly ILogger<CreatioForwarder> _logger;
-    private string? _authCookie;
-    private string? _bpmCsrf;
 
-    public CreatioForwarder(HttpClient http, IConfiguration config, ILogger<CreatioForwarder> logger)
+    public CreatioForwarder(IHttpClientFactory httpClientFactory, CreatioAuthCache authCache, ILogService log, ILogger<CreatioForwarder> logger)
     {
-        _http = http;
-        _config = config;
+        _httpClientFactory = httpClientFactory;
+        _authCache = authCache;
+        _log = log;
         _logger = logger;
     }
 
-    public async Task ForwardAsync(IncomingMessage message, CancellationToken ct = default)
+    public async Task ForwardAsync(CreatioInstance instance, IncomingMessage message, CancellationToken ct = default)
     {
-        await EnsureAuthenticatedAsync(ct);
+        await EnsureAuthenticatedAsync(instance, ct);
 
-        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
-        string endpoint = $"{baseUrl}/0/rest/ChatBridgeWebhookService/Receive";
-
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeWebhookService/Receive";
         var payload = new
         {
             MessageId = message.MessageId,
@@ -47,85 +44,104 @@ public class CreatioForwarder : ICreatioForwarder
             ReceivedAt = message.ReceivedAt
         };
 
-        var response = await PostToCreatioAsync(endpoint, payload, ct);
+        var response = await PostToCreatioAsync(instance, endpoint, payload, ct);
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(ct);
             _logger.LogError("Creatio forward failed {Status}: {Body}", response.StatusCode, body);
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                _authCookie = null;
+                _authCache.Invalidate(instance.Id);
+            await _log.LogAsync(instance.Id, "error_creatio", message.From, false,
+                $"Forward failed {response.StatusCode}: {body[..Math.Min(200, body.Length)]}", ct);
+        }
+        else
+        {
+            await _log.LogAsync(instance.Id, "webhook_in", message.From, true,
+                $"[{message.Type}] {message.TextBody?[..Math.Min(200, message.TextBody?.Length ?? 0)]}", ct);
         }
     }
 
-    public async Task<string> GetMessagesAsync(string conversationId, CancellationToken ct = default)
+    public async Task<string> GetMessagesAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default)
     {
-        await EnsureAuthenticatedAsync(ct);
-        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
-        string endpoint = $"{baseUrl}/0/rest/ChatBridgeAgentService/GetMessages";
-
-        var response = await PostToCreatioAsync(endpoint, new { ConversationId = conversationId }, ct);
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/GetMessages";
+        var response = await PostToCreatioAsync(instance, endpoint, new { ConversationId = conversationId }, ct);
         return await response.Content.ReadAsStringAsync(ct);
     }
 
-    public async Task<string> AgentReplyAsync(string phoneNumber, string message, CancellationToken ct = default)
+    public async Task<string> AgentReplyAsync(CreatioInstance instance, string phoneNumber, string message, CancellationToken ct = default)
     {
-        await EnsureAuthenticatedAsync(ct);
-        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
-        string endpoint = $"{baseUrl}/0/rest/ChatBridgeAgentService/Reply";
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/Reply";
+        var response = await PostToCreatioAsync(instance, endpoint, new { phoneNumber, message }, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
 
-        var response = await PostToCreatioAsync(endpoint, new { phoneNumber, message }, ct);
-        return await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            await _log.LogAsync(instance.Id, "error_creatio", phoneNumber, false,
+                $"AgentReply failed {response.StatusCode}: {body[..Math.Min(200, body.Length)]}", ct);
+        }
+        else
+        {
+            await _log.LogAsync(instance.Id, "agent_reply", phoneNumber, true,
+                message[..Math.Min(200, message.Length)], ct);
+        }
+
+        return body;
     }
 
-    private async Task<HttpResponseMessage> PostToCreatioAsync(string endpoint, object payload, CancellationToken ct)
+    private async Task<HttpResponseMessage> PostToCreatioAsync(CreatioInstance instance, string endpoint, object payload, CancellationToken ct)
     {
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         content.Headers.ContentType!.CharSet = null; // WCF rejects charset=utf-8
 
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
-        if (!string.IsNullOrEmpty(_authCookie))
-            request.Headers.Add("Cookie", _authCookie);
-        if (!string.IsNullOrEmpty(_bpmCsrf))
-            request.Headers.Add("BPMCSRF", _bpmCsrf);
 
-        return await _http.SendAsync(request, ct);
+        if (_authCache.TryGet(instance.Id, out var cookie, out var csrf))
+        {
+            request.Headers.Add("Cookie", cookie);
+            if (!string.IsNullOrEmpty(csrf))
+                request.Headers.Add("BPMCSRF", csrf);
+        }
+
+        var http = _httpClientFactory.CreateClient("creatio");
+        return await http.SendAsync(request, ct);
     }
 
-    private async Task EnsureAuthenticatedAsync(CancellationToken ct)
+    private async Task EnsureAuthenticatedAsync(CreatioInstance instance, CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(_authCookie)) return;
+        if (_authCache.TryGet(instance.Id, out _, out _)) return;
 
-        string baseUrl = _config["Creatio:BaseUrl"]!.TrimEnd('/');
-        string username = _config["Creatio:Username"]!;
-        string password = _config["Creatio:Password"]!;
-
-        var loginPayload = new { UserName = username, UserPassword = password };
+        var loginPayload = new { UserName = instance.CreatioUsername, UserPassword = instance.CreatioPassword };
         var loginContent = new StringContent(JsonSerializer.Serialize(loginPayload), Encoding.UTF8, "application/json");
         loginContent.Headers.ContentType!.CharSet = null;
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/ServiceModel/AuthService.svc/Login")
-        {
-            Content = loginContent
-        };
 
-        var response = await _http.SendAsync(request, ct);
+        string loginUrl = $"{instance.CreatioBaseUrl.TrimEnd('/')}/ServiceModel/AuthService.svc/Login";
+        var request = new HttpRequestMessage(HttpMethod.Post, loginUrl) { Content = loginContent };
+
+        var http = _httpClientFactory.CreateClient("creatio");
+        var response = await http.SendAsync(request, ct);
 
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Creatio login failed {Status}: {Body}", response.StatusCode, body);
+            _logger.LogError("Creatio login failed for instance {Name} {Status}: {Body}", instance.Name, response.StatusCode, body);
             response.EnsureSuccessStatusCode();
         }
 
         if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
         {
             var cookieList = cookies.ToList();
-            _authCookie = string.Join("; ", cookieList.Select(c => c.Split(';')[0]));
+            string authCookie = string.Join("; ", cookieList.Select(c => c.Split(';')[0]));
 
+            string csrf = "";
             var csrfCookie = cookieList.FirstOrDefault(c => c.TrimStart().StartsWith("BPMCSRF="));
             if (csrfCookie != null)
-                _bpmCsrf = csrfCookie.Split(';')[0].Split('=', 2)[1];
+                csrf = csrfCookie.Split(';')[0].Split('=', 2)[1];
+
+            _authCache.Set(instance.Id, authCookie, csrf);
         }
 
-        _logger.LogInformation("Authenticated to Creatio successfully");
+        _logger.LogInformation("Authenticated to Creatio instance {Name}", instance.Name);
     }
 }

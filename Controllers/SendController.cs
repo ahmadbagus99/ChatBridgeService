@@ -5,72 +5,58 @@ using Microsoft.AspNetCore.Mvc;
 namespace ChatBridgeService.Controllers;
 
 [ApiController]
-[Route("send")]
 public class SendController : ControllerBase
 {
+    private readonly IInstanceService _instances;
     private readonly IMetaMessageSender _sender;
-    private readonly IConfiguration _config;
     private readonly ILogger<SendController> _logger;
 
-    public SendController(IMetaMessageSender sender, IConfiguration config, ILogger<SendController> logger)
+    public SendController(IInstanceService instances, IMetaMessageSender sender, ILogger<SendController> logger)
     {
+        _instances = instances;
         _sender = sender;
-        _config = config;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Kirim pesan teks biasa ke WhatsApp.
-    /// Dipanggil dari Creatio Script Task.
-    /// </summary>
-    [HttpPost("text")]
-    public async Task<IActionResult> Text([FromBody] SendTextRequest request, CancellationToken ct)
+    [HttpPost("send/{apiKey}/text")]
+    public async Task<IActionResult> Text(string apiKey, [FromBody] SendTextRequest request, CancellationToken ct)
     {
-        if (!IsAuthorized()) return Unauthorized(new { error = "Invalid API key" });
+        var instance = await ResolveInstanceAsync(apiKey, ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || string.IsNullOrEmpty(request.Body))
-            return BadRequest(new { error = "Field 'To' dan 'Body' wajib diisi" });
+            return BadRequest(new { error = "Fields 'To' and 'Body' are required" });
 
-        _logger.LogInformation("Send text ke {To}", request.To);
-        var result = await _sender.SendTextAsync(request, ct);
+        _logger.LogInformation("[{Name}] Send text ke {To}", instance.Name, request.To);
+        var result = await _sender.SendTextAsync(instance, request, ct);
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    /// <summary>
-    /// Kirim interactive buttons (max 3) — untuk chat tree menu pilihan.
-    /// </summary>
-    [HttpPost("buttons")]
-    public async Task<IActionResult> Buttons([FromBody] SendButtonsRequest request, CancellationToken ct)
+    [HttpPost("send/{apiKey}/buttons")]
+    public async Task<IActionResult> Buttons(string apiKey, [FromBody] SendButtonsRequest request, CancellationToken ct)
     {
-        if (!IsAuthorized()) return Unauthorized(new { error = "Invalid API key" });
+        var instance = await ResolveInstanceAsync(apiKey, ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || request.Buttons.Count == 0)
-            return BadRequest(new { error = "Field 'To' dan minimal 1 button wajib diisi" });
+            return BadRequest(new { error = "Fields 'To' and at least 1 button are required" });
 
-        _logger.LogInformation("Send buttons ke {To} ({Count} buttons)", request.To, request.Buttons.Count);
-        var result = await _sender.SendButtonsAsync(request, ct);
+        _logger.LogInformation("[{Name}] Send buttons ke {To}", instance.Name, request.To);
+        var result = await _sender.SendButtonsAsync(instance, request, ct);
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    /// <summary>
-    /// Kirim list message (max 10 baris) — untuk menu dengan banyak pilihan.
-    /// </summary>
-    [HttpPost("list")]
-    public async Task<IActionResult> List([FromBody] SendListRequest request, CancellationToken ct)
+    [HttpPost("send/{apiKey}/list")]
+    public async Task<IActionResult> List(string apiKey, [FromBody] SendListRequest request, CancellationToken ct)
     {
-        if (!IsAuthorized()) return Unauthorized(new { error = "Invalid API key" });
+        var instance = await ResolveInstanceAsync(apiKey, ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || request.Rows.Count == 0)
-            return BadRequest(new { error = "Field 'To' dan minimal 1 row wajib diisi" });
+            return BadRequest(new { error = "Fields 'To' and at least 1 row are required" });
 
-        _logger.LogInformation("Send list ke {To} ({Count} rows)", request.To, request.Rows.Count);
-        var result = await _sender.SendListAsync(request, ct);
+        _logger.LogInformation("[{Name}] Send list ke {To}", instance.Name, request.To);
+        var result = await _sender.SendListAsync(instance, request, ct);
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    // Cek API key dari header X-Api-Key — cegah akses unauthorized ke sender endpoint
-    private bool IsAuthorized()
-    {
-        string expected = _config["ChatBridge:ApiKey"] ?? string.Empty;
-        if (string.IsNullOrEmpty(expected)) return true; // Kalau belum dikonfigurasi, skip auth
-        Request.Headers.TryGetValue("X-Api-Key", out var provided);
-        return provided == expected;
-    }
+    private Task<ChatBridgeService.Models.CreatioInstance?> ResolveInstanceAsync(string apiKey, CancellationToken ct) =>
+        _instances.GetByApiKeyAsync(apiKey, ct);
 }

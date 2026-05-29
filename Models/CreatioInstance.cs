@@ -1,0 +1,24 @@
+namespace ChatBridgeService.Models;
+
+public class CreatioInstance
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "";
+
+    // Digunakan sebagai identifier di URL: /webhook/{ApiKey}, /chat/{ApiKey}/...
+    public string ApiKey { get; set; } = "";
+
+    // Creatio credentials
+    public string CreatioBaseUrl { get; set; } = "";
+    public string CreatioUsername { get; set; } = "";
+    public string CreatioPassword { get; set; } = "";
+
+    // Meta WhatsApp Cloud API credentials
+    public string MetaAccessToken { get; set; } = "";
+    public string MetaPhoneNumberId { get; set; } = "";
+    public string MetaVerifyToken { get; set; } = "";
+
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

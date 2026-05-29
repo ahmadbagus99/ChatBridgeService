@@ -1,19 +1,36 @@
+using ChatBridgeService.Data;
 using ChatBridgeService.Services;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// Database
+builder.Services.AddDbContext<AppDbContext>(opt =>
+    opt.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+
+// Services
+builder.Services.AddScoped<IInstanceService, InstanceService>();
 builder.Services.AddScoped<IMetaWebhookParser, MetaWebhookParser>();
-builder.Services.AddHttpClient<ICreatioForwarder, CreatioForwarder>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-builder.Services.AddHttpClient<IMetaMessageSender, MetaMessageSender>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(15);
-});
+builder.Services.AddScoped<ICreatioForwarder, CreatioForwarder>();
+builder.Services.AddScoped<IMetaMessageSender, MetaMessageSender>();
+builder.Services.AddSingleton<CreatioAuthCache>();
+builder.Services.AddSingleton<AdminSession>();
+builder.Services.AddScoped<ILogService, LogService>();
+
+// HTTP clients
+builder.Services.AddHttpClient("creatio", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient("meta", client => client.Timeout = TimeSpan.FromSeconds(15));
 
 var app = builder.Build();
+
+// Auto-migrate on startup
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
 
 app.Use(async (ctx, next) =>
 {

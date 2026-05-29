@@ -8,25 +8,25 @@ namespace ChatBridgeService.Services;
 
 public interface IMetaMessageSender
 {
-    Task<SendResponse> SendTextAsync(SendTextRequest request, CancellationToken ct = default);
-    Task<SendResponse> SendButtonsAsync(SendButtonsRequest request, CancellationToken ct = default);
-    Task<SendResponse> SendListAsync(SendListRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendTextAsync(CreatioInstance instance, SendTextRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendButtonsAsync(CreatioInstance instance, SendButtonsRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendListAsync(CreatioInstance instance, SendListRequest request, CancellationToken ct = default);
 }
 
 public class MetaMessageSender : IMetaMessageSender
 {
-    private readonly HttpClient _http;
-    private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILogService _log;
     private readonly ILogger<MetaMessageSender> _logger;
 
-    public MetaMessageSender(HttpClient http, IConfiguration config, ILogger<MetaMessageSender> logger)
+    public MetaMessageSender(IHttpClientFactory httpClientFactory, ILogService log, ILogger<MetaMessageSender> logger)
     {
-        _http = http;
-        _config = config;
+        _httpClientFactory = httpClientFactory;
+        _log = log;
         _logger = logger;
     }
 
-    public async Task<SendResponse> SendTextAsync(SendTextRequest request, CancellationToken ct = default)
+    public Task<SendResponse> SendTextAsync(CreatioInstance instance, SendTextRequest request, CancellationToken ct = default)
     {
         var payload = new
         {
@@ -36,23 +36,17 @@ public class MetaMessageSender : IMetaMessageSender
             type = "text",
             text = new { preview_url = false, body = request.Body }
         };
-
-        return await PostAsync(request.PhoneNumberId, payload, ct);
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
     }
 
-    public async Task<SendResponse> SendButtonsAsync(SendButtonsRequest request, CancellationToken ct = default)
+    public Task<SendResponse> SendButtonsAsync(CreatioInstance instance, SendButtonsRequest request, CancellationToken ct = default)
     {
-        // Meta maksimal 3 buttons, title max 20 karakter
         var buttons = request.Buttons
             .Take(3)
             .Select(b => new
             {
                 type = "reply",
-                reply = new
-                {
-                    id = b.Id,
-                    title = b.Title.Length > 20 ? b.Title[..20] : b.Title
-                }
+                reply = new { id = b.Id, title = b.Title.Length > 20 ? b.Title[..20] : b.Title }
             });
 
         var payload = new
@@ -68,13 +62,11 @@ public class MetaMessageSender : IMetaMessageSender
                 action = new { buttons }
             }
         };
-
-        return await PostAsync(request.PhoneNumberId, payload, ct);
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
     }
 
-    public async Task<SendResponse> SendListAsync(SendListRequest request, CancellationToken ct = default)
+    public Task<SendResponse> SendListAsync(CreatioInstance instance, SendListRequest request, CancellationToken ct = default)
     {
-        // Meta maksimal 10 rows dalam satu section
         var rows = request.Rows
             .Take(10)
             .Select(r => new
@@ -94,56 +86,44 @@ public class MetaMessageSender : IMetaMessageSender
             {
                 type = "list",
                 body = new { text = request.BodyText },
-                action = new
-                {
-                    button = request.ButtonLabel,
-                    sections = new[]
-                    {
-                        new { rows }
-                    }
-                }
+                action = new { button = request.ButtonLabel, sections = new[] { new { rows } } }
             }
         };
-
-        return await PostAsync(request.PhoneNumberId, payload, ct);
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
     }
 
-    private async Task<SendResponse> PostAsync(string? phoneNumberId, object payload, CancellationToken ct)
+    private async Task<SendResponse> PostAsync(CreatioInstance instance, string? overridePhoneNumberId, object payload, CancellationToken ct)
     {
-        string resolvedPhoneNumberId = phoneNumberId ?? _config["Meta:PhoneNumberId"] ?? string.Empty;
-        string accessToken = _config["Meta:AccessToken"] ?? string.Empty;
+        string phoneNumberId = overridePhoneNumberId ?? instance.MetaPhoneNumberId;
+        string accessToken = instance.MetaAccessToken;
 
-        if (string.IsNullOrEmpty(resolvedPhoneNumberId) || string.IsNullOrEmpty(accessToken))
-            return new SendResponse { Success = false, Error = "Meta:PhoneNumberId atau Meta:AccessToken belum dikonfigurasi" };
+        if (string.IsNullOrEmpty(phoneNumberId) || string.IsNullOrEmpty(accessToken))
+            return new SendResponse { Success = false, Error = "MetaPhoneNumberId or MetaAccessToken not configured for this instance" };
 
-        string url = $"https://graph.facebook.com/v20.0/{resolvedPhoneNumberId}/messages";
-        string json = JsonSerializer.Serialize(payload);
-
+        string url = $"https://graph.facebook.com/v20.0/{phoneNumberId}/messages";
         var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", accessToken) },
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
+            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
         };
 
-        var response = await _http.SendAsync(req, ct);
+        var http = _httpClientFactory.CreateClient("meta");
+        var response = await http.SendAsync(req, ct);
         string body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Meta API error {Status}: {Body}", response.StatusCode, body);
+            await _log.LogAsync(instance.Id, "error_meta", phoneNumberId?[..Math.Min(50, phoneNumberId.Length)], false,
+                $"Meta API {(int)response.StatusCode}: {body[..Math.Min(300, body.Length)]}");
             return new SendResponse { Success = false, Error = $"Meta API {(int)response.StatusCode}: {body}" };
         }
 
-        // Ambil message ID dari response Meta
         string? metaMessageId = null;
-        try
-        {
-            var node = JsonNode.Parse(body);
-            metaMessageId = node?["messages"]?[0]?["id"]?.GetValue<string>();
-        }
+        try { metaMessageId = JsonNode.Parse(body)?["messages"]?[0]?["id"]?.GetValue<string>(); }
         catch { }
 
-        _logger.LogInformation("Pesan terkirim ke {To}, Meta message ID: {Id}", payload, metaMessageId);
+        await _log.LogAsync(instance.Id, "agent_reply", phoneNumberId, true, $"MetaMessageId: {metaMessageId}");
         return new SendResponse { Success = true, MetaMessageId = metaMessageId };
     }
 }

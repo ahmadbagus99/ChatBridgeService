@@ -6,55 +6,52 @@ using Microsoft.AspNetCore.Mvc;
 namespace ChatBridgeService.Controllers;
 
 [ApiController]
-[Route("webhook")]
 public class WebhookController : ControllerBase
 {
-    private readonly IConfiguration _config;
+    private readonly IInstanceService _instances;
     private readonly IMetaWebhookParser _parser;
-    private readonly ICreatioForwarder _forwarder;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WebhookController> _logger;
 
     public WebhookController(
-        IConfiguration config,
+        IInstanceService instances,
         IMetaWebhookParser parser,
-        ICreatioForwarder forwarder,
+        IServiceScopeFactory scopeFactory,
         ILogger<WebhookController> logger)
     {
-        _config = config;
+        _instances = instances;
         _parser = parser;
-        _forwarder = forwarder;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Meta webhook verification handshake.
-    /// Meta mengirim GET ke sini saat pertama kali setup webhook.
-    /// </summary>
-    [HttpGet]
-    public IActionResult Verify(
+    [HttpGet("webhook/{apiKey}")]
+    public async Task<IActionResult> Verify(
+        string apiKey,
         [FromQuery(Name = "hub.mode")] string mode,
         [FromQuery(Name = "hub.challenge")] string challenge,
-        [FromQuery(Name = "hub.verify_token")] string verifyToken)
+        [FromQuery(Name = "hub.verify_token")] string verifyToken,
+        CancellationToken ct)
     {
-        string expectedToken = _config["Meta:VerifyToken"] ?? string.Empty;
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return NotFound();
 
-        if (mode == "subscribe" && verifyToken == expectedToken)
+        if (mode == "subscribe" && verifyToken == instance.MetaVerifyToken)
         {
-            _logger.LogInformation("Webhook verified successfully");
+            _logger.LogInformation("Webhook verified for instance {Name}", instance.Name);
             return Ok(int.Parse(challenge));
         }
 
-        _logger.LogWarning("Webhook verification failed — token mismatch");
+        _logger.LogWarning("Webhook verification failed for instance {Name} — token mismatch", instance.Name);
         return Forbid();
     }
 
-    /// <summary>
-    /// Menerima pesan masuk dari Meta Cloud API.
-    /// Meta menggunakan fire-and-forget: harus balas 200 dalam 20 detik.
-    /// </summary>
-    [HttpPost]
-    public async Task<IActionResult> Receive(CancellationToken ct)
+    [HttpPost("webhook/{apiKey}")]
+    public async Task<IActionResult> Receive(string apiKey, CancellationToken ct)
     {
+        var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
+        if (instance == null) return NotFound();
+
         MetaWebhookPayload? payload;
         try
         {
@@ -65,23 +62,26 @@ public class WebhookController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse Meta webhook payload");
-            return Ok(); // Tetap 200 agar Meta tidak retry terus
+            _logger.LogError(ex, "Failed to parse Meta webhook payload for instance {Name}", instance.Name);
+            return Ok();
         }
 
         if (payload == null) return Ok();
 
         var messages = _parser.Parse(payload).ToList();
-        _logger.LogInformation("Received {Count} message(s) from Meta", messages.Count);
+        _logger.LogInformation("Received {Count} message(s) for instance {Name}", messages.Count, instance.Name);
 
-        // Forward ke Creatio secara fire-and-forget, tidak block response ke Meta
+        // Buat scope baru agar DbContext tidak di-dispose saat request selesai
         _ = Task.Run(async () =>
         {
+            using var scope = _scopeFactory.CreateScope();
+            var forwarder = scope.ServiceProvider.GetRequiredService<ICreatioForwarder>();
+
             foreach (var msg in messages)
             {
                 try
                 {
-                    await _forwarder.ForwardAsync(msg);
+                    await forwarder.ForwardAsync(instance, msg);
                     _logger.LogInformation("Forwarded message {Id} from {From}", msg.MessageId, msg.From);
                 }
                 catch (Exception ex)
