@@ -133,3 +133,74 @@ Migrations yang sudah ada: `InitialCreate`, `AddMessageLogs`, `IncreasePhoneNumb
 ## CSP (Content Security Policy)
 
 Service menambahkan header `Content-Security-Policy: frame-ancestors *` agar chat iframe bisa di-embed di Creatio. Creatio juga perlu whitelist `http://localhost:5051` di **System Designer → Security → Content Security Policy → Trusted Sources** (directives: `connect-src` dan `frame-src`).
+
+---
+
+## Architectural Context & Future Direction
+
+### Arsitektur saat ini (v1 — transitional)
+
+ChatBridgeService menyimpan credentials Creatio (username/password) di DB dan melakukan cookie-based auth ke Creatio. Ini adalah trade-off kesederhanaan untuk iterasi awal.
+
+**Masalah yang diketahui:**
+- Creatio username/password disimpan plaintext di DB → security risk
+- Cookie auth rapuh (expire, BPMCSRF token)
+- Setup di dua tempat (ChatBridgeService admin + Creatio)
+- ChatBridgeService terlalu banyak tanggung jawab (bridge + chat UI + proxy)
+
+### Target arsitektur (v2 — Opsi B)
+
+Mengacu pada model Beesender: **Chat UI native di Creatio, ChatBridgeService hanya pure bridge.**
+
+```
+WA masuk → ChatBridgeService → POST callbackUrl (X-Api-Key) → Creatio
+Agent reply → Creatio → POST /send/{apiKey}/text → ChatBridgeService → Meta
+```
+
+**Yang hilang dari ChatBridgeService di v2:**
+- `/chat/{apiKey}/...` — chat page (pindah ke Creatio native UI)
+- `/api/{apiKey}/messages/...` — GetMessages (Creatio query sendiri)
+- `/api/{apiKey}/reply` — proxy reply (Creatio langsung call /send)
+- Creatio credentials — tidak perlu disimpan sama sekali
+- Cookie auth / CreatioAuthCache / CreatioForwarder
+
+**Yang tersisa di ChatBridgeService v2:**
+- `POST /webhook/{apiKey}` — terima dari Meta → push ke Creatio via API key
+- `POST /send/{apiKey}/text|buttons|list` — terima dari Creatio → kirim ke Meta
+- Admin panel (manage instances)
+- Logging
+
+### Config ownership (best practice)
+
+| Setting | Disimpan di |
+|---------|------------|
+| MetaAccessToken, PhoneNumberId, VerifyToken | ChatBridgeService (yang call Meta) |
+| Creatio BaseUrl, credentials | ChatBridgeService saat ini → hilang di v2 |
+| ChatBridgeSenderUrl, ApiKey | Creatio (Creatio yang call /send) |
+| ProcessName, BotName, AI settings | Creatio (internal logic Creatio) |
+
+**Rule:** Config hidup di tempat yang **menggunakannya**.
+
+### Security improvements yang perlu dilakukan
+
+1. **Sekarang:** Ganti akun `Supervisor` → dedicated service account dengan minimal permissions
+2. **Berikutnya:** Encrypt Creatio password di DB (AES dengan master key dari env var)
+3. **Target:** Flip ke API key auth — Creatio implement `X-ChatBridge-Key` validation di service-nya, ChatBridgeService tidak perlu simpan credentials Creatio sama sekali
+
+### Meta message status flow
+
+```
+Agent send → ChatBridgeService → Meta API
+                                    ↓ metaMessageId
+              ChatBridgeService → Creatio /SetMetaMessageId
+                                    ↓
+Meta kirim status update (sent/delivered/read/failed)
+                                    ↓
+ChatBridgeService → Creatio /UpdateStatus (match by metaMessageId)
+```
+
+Status yang mungkin dari Meta: `sent` → `delivered` → `read` / `failed` (error code 131047 = 24h window expired).
+
+### Migrations
+
+`InitialCreate`, `AddMessageLogs`, `IncreasePhoneNumberLength`

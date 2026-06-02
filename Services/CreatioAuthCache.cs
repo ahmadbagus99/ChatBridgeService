@@ -2,29 +2,27 @@ using System.Collections.Concurrent;
 
 namespace ChatBridgeService.Services;
 
-// Singleton — menyimpan auth cookie Creatio per instance agar tidak login ulang setiap request
+// Singleton — cache OAuth Bearer token Creatio per instance
 public class CreatioAuthCache
 {
-    private record AuthEntry(string Cookie, string Csrf, DateTime ExpiresAt);
+    private record AuthEntry(string Token, DateTime ExpiresAt);
 
     private readonly ConcurrentDictionary<Guid, AuthEntry> _cache = new();
 
-    public bool TryGet(Guid instanceId, out string cookie, out string csrf)
+    public bool TryGet(Guid instanceId, out string token)
     {
         if (_cache.TryGetValue(instanceId, out var entry) && entry.ExpiresAt > DateTime.UtcNow)
         {
-            cookie = entry.Cookie;
-            csrf = entry.Csrf;
+            token = entry.Token;
             return true;
         }
-        cookie = csrf = "";
+        token = "";
         return false;
     }
 
-    public void Set(Guid instanceId, string cookie, string csrf)
+    public void Set(Guid instanceId, string token, int expiresInSeconds)
     {
-        // Cookie Creatio biasanya valid 20 menit, cache 15 menit untuk safety margin
-        _cache[instanceId] = new AuthEntry(cookie, csrf, DateTime.UtcNow.AddMinutes(15));
+        _cache[instanceId] = new AuthEntry(token, DateTime.UtcNow.AddSeconds(expiresInSeconds - 60));
     }
 
     public void Invalidate(Guid instanceId) => _cache.TryRemove(instanceId, out _);

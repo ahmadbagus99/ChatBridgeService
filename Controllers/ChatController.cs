@@ -92,8 +92,15 @@ public class ChatController : ControllerBase
             }
             else if (!string.IsNullOrEmpty(sendResult.MetaMessageId))
             {
-                // 3. Update Creatio with metaMessageId — use CancellationToken.None karena request sudah selesai
-                _ = _creatio.SetMetaMessageIdAsync(instance, body.PhoneNumber, body.Message, sendResult.MetaMessageId, CancellationToken.None);
+                // 3. Update Creatio with metaMessageId
+                try
+                {
+                    await _creatio.SetMetaMessageIdAsync(instance, body.PhoneNumber, body.Message, sendResult.MetaMessageId, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "AgentReply: SetMetaMessageId failed for {Phone}, MetaMessageId={Id}", body.PhoneNumber, sendResult.MetaMessageId);
+                }
             }
 
             return Ok(new { success = true, metaMessageId = sendResult.MetaMessageId, metaError = sendResult.Success ? null : sendResult.Error });

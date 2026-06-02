@@ -114,8 +114,9 @@ public class AdminController : ControllerBase
             Name = dto.Name.Trim(),
             ApiKey = string.IsNullOrWhiteSpace(dto.ApiKey) ? GenerateApiKey() : dto.ApiKey.Trim(),
             CreatioBaseUrl = dto.CreatioBaseUrl.TrimEnd('/'),
-            CreatioUsername = dto.CreatioUsername ?? "",
-            CreatioPassword = dto.CreatioPassword ?? "",
+            CreatioIdentityUrl = dto.CreatioIdentityUrl?.TrimEnd('/') ?? "",
+            CreatioClientId = dto.CreatioClientId ?? "",
+            CreatioClientSecret = dto.CreatioClientSecret ?? "",
             MetaAccessToken = dto.MetaAccessToken ?? "",
             MetaPhoneNumberId = dto.MetaPhoneNumberId ?? "",
             MetaVerifyToken = dto.MetaVerifyToken ?? "",
@@ -143,8 +144,9 @@ public class AdminController : ControllerBase
         instance.Name = dto.Name?.Trim() ?? instance.Name;
         instance.ApiKey = string.IsNullOrWhiteSpace(dto.ApiKey) ? instance.ApiKey : dto.ApiKey.Trim();
         instance.CreatioBaseUrl = dto.CreatioBaseUrl?.TrimEnd('/') ?? instance.CreatioBaseUrl;
-        instance.CreatioUsername = dto.CreatioUsername ?? instance.CreatioUsername;
-        if (!string.IsNullOrWhiteSpace(dto.CreatioPassword)) instance.CreatioPassword = dto.CreatioPassword;
+        instance.CreatioIdentityUrl = dto.CreatioIdentityUrl?.TrimEnd('/') ?? instance.CreatioIdentityUrl;
+        instance.CreatioClientId = dto.CreatioClientId ?? instance.CreatioClientId;
+        if (!string.IsNullOrWhiteSpace(dto.CreatioClientSecret)) instance.CreatioClientSecret = dto.CreatioClientSecret;
         instance.MetaAccessToken = dto.MetaAccessToken ?? instance.MetaAccessToken;
         instance.MetaPhoneNumberId = dto.MetaPhoneNumberId ?? instance.MetaPhoneNumberId;
         instance.MetaVerifyToken = dto.MetaVerifyToken ?? instance.MetaVerifyToken;
@@ -441,7 +443,7 @@ button:hover{background:#6d28d9}
         string errorHtml = error != null ? $"<div class=\"alert-error\">{H(error)}</div>" : "";
         string selActive = inst?.IsActive != false ? "selected" : "";
         string selInactive = inst?.IsActive == false ? "selected" : "";
-        string pwdPlaceholder = isEdit ? "Leave blank to keep current" : "Creatio password";
+        string secretPlaceholder = isEdit ? "Leave blank to keep current" : "Client Secret";
 
         string content = $"""
             <div style="margin-bottom:16px">
@@ -471,18 +473,24 @@ button:hover{background:#6d28d9}
             </div>
             <div class="card">
               <div style="font-weight:700;font-size:14px;margin-bottom:16px">Creatio Configuration</div>
-              <div class="input-group">
-                <label>Creatio Base URL *</label>
-                <input name="CreatioBaseUrl" value="{H(inst?.CreatioBaseUrl)}" placeholder="http://localhost:8080" required>
+              <div class="form-row">
+                <div class="input-group">
+                  <label>Creatio Base URL *</label>
+                  <input name="CreatioBaseUrl" value="{H(inst?.CreatioBaseUrl)}" placeholder="http://localhost:8180" required>
+                </div>
+                <div class="input-group">
+                  <label>Identity Server URL *</label>
+                  <input name="CreatioIdentityUrl" value="{H(inst?.CreatioIdentityUrl)}" placeholder="http://localhost:8190">
+                </div>
               </div>
               <div class="form-row">
                 <div class="input-group">
-                  <label>Username</label>
-                  <input name="CreatioUsername" value="{H(inst?.CreatioUsername)}" placeholder="Supervisor">
+                  <label>Client ID</label>
+                  <input name="CreatioClientId" value="{H(inst?.CreatioClientId)}" placeholder="OAuth Client ID">
                 </div>
                 <div class="input-group">
-                  <label>Password</label>
-                  <input type="password" name="CreatioPassword" placeholder="{pwdPlaceholder}">
+                  <label>Client Secret</label>
+                  <input type="password" name="CreatioClientSecret" placeholder="{secretPlaceholder}">
                 </div>
               </div>
             </div>
@@ -600,8 +608,9 @@ public class InstanceFormDto
     public string? Name { get; set; }
     public string? ApiKey { get; set; }
     public string? CreatioBaseUrl { get; set; }
-    public string? CreatioUsername { get; set; }
-    public string? CreatioPassword { get; set; }
+    public string? CreatioIdentityUrl { get; set; }
+    public string? CreatioClientId { get; set; }
+    public string? CreatioClientSecret { get; set; }
     public string? MetaAccessToken { get; set; }
     public string? MetaPhoneNumberId { get; set; }
     public string? MetaVerifyToken { get; set; }

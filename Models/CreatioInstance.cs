@@ -8,10 +8,11 @@ public class CreatioInstance
     // Digunakan sebagai identifier di URL: /webhook/{ApiKey}, /chat/{ApiKey}/...
     public string ApiKey { get; set; } = "";
 
-    // Creatio credentials
+    // Creatio OAuth credentials
     public string CreatioBaseUrl { get; set; } = "";
-    public string CreatioUsername { get; set; } = "";
-    public string CreatioPassword { get; set; } = "";
+    public string CreatioIdentityUrl { get; set; } = "";
+    public string CreatioClientId { get; set; } = "";
+    public string CreatioClientSecret { get; set; } = "";
 
     // Meta WhatsApp Cloud API credentials
     public string MetaAccessToken { get; set; } = "";

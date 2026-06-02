@@ -144,12 +144,8 @@ public class CreatioForwarder : ICreatioForwarder
 
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
 
-        if (_authCache.TryGet(instance.Id, out var cookie, out var csrf))
-        {
-            request.Headers.Add("Cookie", cookie);
-            if (!string.IsNullOrEmpty(csrf))
-                request.Headers.Add("BPMCSRF", csrf);
-        }
+        if (_authCache.TryGet(instance.Id, out var token))
+            request.Headers.Add("Authorization", $"Bearer {token}");
 
         var http = _httpClientFactory.CreateClient("creatio");
         return await http.SendAsync(request, ct);
@@ -157,38 +153,43 @@ public class CreatioForwarder : ICreatioForwarder
 
     private async Task EnsureAuthenticatedAsync(CreatioInstance instance, CancellationToken ct)
     {
-        if (_authCache.TryGet(instance.Id, out _, out _)) return;
+        if (_authCache.TryGet(instance.Id, out _)) return;
 
-        var loginPayload = new { UserName = instance.CreatioUsername, UserPassword = instance.CreatioPassword };
-        var loginContent = new StringContent(JsonSerializer.Serialize(loginPayload), Encoding.UTF8, "application/json");
-        loginContent.Headers.ContentType!.CharSet = null;
-
-        string loginUrl = $"{instance.CreatioBaseUrl.TrimEnd('/')}/ServiceModel/AuthService.svc/Login";
-        var request = new HttpRequestMessage(HttpMethod.Post, loginUrl) { Content = loginContent };
+        string tokenUrl = $"{instance.CreatioIdentityUrl.TrimEnd('/')}/connect/token";
+        var formData = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"]    = "client_credentials",
+            ["client_id"]     = instance.CreatioClientId,
+            ["client_secret"] = instance.CreatioClientSecret
+        });
 
         var http = _httpClientFactory.CreateClient("creatio");
-        var response = await http.SendAsync(request, ct);
+        var response = await http.PostAsync(tokenUrl, formData, ct);
 
         if (!response.IsSuccessStatusCode)
         {
             string body = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Creatio login failed for instance {Name} {Status}: {Body}", instance.Name, response.StatusCode, body);
+            _logger.LogError("Creatio OAuth failed for instance {Name} {Status}: {Body}", instance.Name, response.StatusCode, body);
             response.EnsureSuccessStatusCode();
         }
 
-        if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
-        {
-            var cookieList = cookies.ToList();
-            string authCookie = string.Join("; ", cookieList.Select(c => c.Split(';')[0]));
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        var tokenResponse = JsonSerializer.Deserialize<OAuthTokenResponse>(responseBody,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            string csrf = "";
-            var csrfCookie = cookieList.FirstOrDefault(c => c.TrimStart().StartsWith("BPMCSRF="));
-            if (csrfCookie != null)
-                csrf = csrfCookie.Split(';')[0].Split('=', 2)[1];
+        if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
+            throw new Exception($"Creatio OAuth response invalid for instance {instance.Name}");
 
-            _authCache.Set(instance.Id, authCookie, csrf);
-        }
+        _authCache.Set(instance.Id, tokenResponse.AccessToken, tokenResponse.ExpiresIn > 0 ? tokenResponse.ExpiresIn : 3600);
+        _logger.LogInformation("OAuth token acquired for Creatio instance {Name}", instance.Name);
+    }
 
-        _logger.LogInformation("Authenticated to Creatio instance {Name}", instance.Name);
+    private sealed class OAuthTokenResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("access_token")]
+        public string AccessToken { get; set; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("expires_in")]
+        public int ExpiresIn { get; set; }
     }
 }

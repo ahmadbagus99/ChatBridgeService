@@ -30,8 +30,9 @@ public class AppDbContext : DbContext
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
             e.Property(x => x.ApiKey).HasMaxLength(100).IsRequired();
             e.Property(x => x.CreatioBaseUrl).HasMaxLength(500).IsRequired();
-            e.Property(x => x.CreatioUsername).HasMaxLength(200).IsRequired();
-            e.Property(x => x.CreatioPassword).HasMaxLength(500).IsRequired();
+            e.Property(x => x.CreatioIdentityUrl).HasMaxLength(500).IsRequired();
+            e.Property(x => x.CreatioClientId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.CreatioClientSecret).HasMaxLength(500).IsRequired();
             e.Property(x => x.MetaAccessToken).HasMaxLength(1000);
             e.Property(x => x.MetaPhoneNumberId).HasMaxLength(100);
             e.Property(x => x.MetaVerifyToken).HasMaxLength(200);
