@@ -11,6 +11,10 @@ public interface IMetaMessageSender
     Task<SendResponse> SendTextAsync(CreatioInstance instance, SendTextRequest request, CancellationToken ct = default);
     Task<SendResponse> SendButtonsAsync(CreatioInstance instance, SendButtonsRequest request, CancellationToken ct = default);
     Task<SendResponse> SendListAsync(CreatioInstance instance, SendListRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendImageAsync(CreatioInstance instance, SendImageRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendDocumentAsync(CreatioInstance instance, SendDocumentRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendLocationAsync(CreatioInstance instance, SendLocationRequest request, CancellationToken ct = default);
+    Task<SendResponse> SendCtaAsync(CreatioInstance instance, SendCtaRequest request, CancellationToken ct = default);
 }
 
 public class MetaMessageSender : IMetaMessageSender
@@ -87,6 +91,84 @@ public class MetaMessageSender : IMetaMessageSender
                 type = "list",
                 body = new { text = request.BodyText },
                 action = new { button = request.ButtonLabel, sections = new[] { new { rows } } }
+            }
+        };
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
+    }
+
+    public Task<SendResponse> SendImageAsync(CreatioInstance instance, SendImageRequest request, CancellationToken ct = default)
+    {
+        var image = new Dictionary<string, object> { ["link"] = request.MediaUrl };
+        if (!string.IsNullOrWhiteSpace(request.Caption)) image["caption"] = request.Caption!;
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = request.To,
+            type = "image",
+            image
+        };
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
+    }
+
+    public Task<SendResponse> SendDocumentAsync(CreatioInstance instance, SendDocumentRequest request, CancellationToken ct = default)
+    {
+        var document = new Dictionary<string, object> { ["link"] = request.MediaUrl };
+        if (!string.IsNullOrWhiteSpace(request.FileName)) document["filename"] = request.FileName!;
+        if (!string.IsNullOrWhiteSpace(request.Caption)) document["caption"] = request.Caption!;
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = request.To,
+            type = "document",
+            document
+        };
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
+    }
+
+    public Task<SendResponse> SendLocationAsync(CreatioInstance instance, SendLocationRequest request, CancellationToken ct = default)
+    {
+        var location = new Dictionary<string, object>
+        {
+            ["latitude"] = request.Latitude,
+            ["longitude"] = request.Longitude
+        };
+        if (!string.IsNullOrWhiteSpace(request.Name)) location["name"] = request.Name!;
+        if (!string.IsNullOrWhiteSpace(request.Address)) location["address"] = request.Address!;
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = request.To,
+            type = "location",
+            location
+        };
+        return PostAsync(instance, request.PhoneNumberId, payload, ct);
+    }
+
+    public Task<SendResponse> SendCtaAsync(CreatioInstance instance, SendCtaRequest request, CancellationToken ct = default)
+    {
+        string displayText = request.ButtonText.Length > 20 ? request.ButtonText[..20] : request.ButtonText;
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to = request.To,
+            type = "interactive",
+            interactive = new
+            {
+                type = "cta_url",
+                body = new { text = request.BodyText },
+                action = new
+                {
+                    name = "cta_url",
+                    parameters = new { display_text = displayText, url = request.Url }
+                }
             }
         };
         return PostAsync(instance, request.PhoneNumberId, payload, ct);

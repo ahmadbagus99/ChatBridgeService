@@ -198,14 +198,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 <div id="msgs"><div class="empty">Loading messages...</div></div>
 <div id="status"></div>
 <div id="bar">
-  <textarea id="inp" rows="1" placeholder="Type a message..." onkeydown="onKey(event)"></textarea>
-  <button id="btn" onclick="send()">&#10148;</button>
+  <textarea id="inp" rows="1" placeholder="Loading..." onkeydown="onKey(event)" disabled></textarea>
+  <button id="btn" onclick="send()" disabled>&#10148;</button>
 </div>
 <script>
 var apiKey = {{safeKey}};
 var convId = {{safeId}};
 var phone  = {{safePhone}};
 document.getElementById('hdr-phone').textContent = phone || convId;
+
+var agentActive = false;
+
+function applyOwner(d){
+  // Reply aktif kalau owner bukan bot
+  agentActive = (d.isBot === false);
+  var inp = document.getElementById('inp');
+  var btn = document.getElementById('btn');
+  inp.disabled = btn.disabled = !agentActive;
+  if(agentActive){
+    inp.placeholder = 'Type a message...';
+  } else {
+    inp.placeholder = 'Masih ditangani bot — reply nonaktif';
+  }
+}
 
 function esc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -284,8 +299,10 @@ function load(){
     .then(function(d){
       if(d.success){
         render(d.messages);
+        applyOwner(d);
         document.getElementById('status').textContent=
-          'Updated at '+new Date().toLocaleTimeString();
+          (d.isBot===false ? ('Owner: '+esc(d.ownerName||'Agent')) : 'Bot')+
+          ' • Updated '+new Date().toLocaleTimeString();
       } else {
         showError(d.error||'Failed to load messages');
       }
@@ -298,6 +315,7 @@ function onKey(e){
 }
 
 function send(){
+  if(!agentActive) return;          // reply terkunci selama belum ke agent
   var inp=document.getElementById('inp');
   var text=inp.value.trim();
   if(!text||!phone) return;
@@ -320,7 +338,9 @@ function send(){
     }
   })
   .catch(function(e){alert('Error: '+e.message);})
-  .finally(function(){inp.disabled=btn.disabled=false;inp.focus();});
+  .finally(function(){
+    if(agentActive){inp.disabled=btn.disabled=false;inp.focus();}
+  });
 }
 
 function addFailedBubble(text, errMsg){

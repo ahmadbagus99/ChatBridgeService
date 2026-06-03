@@ -11,6 +11,11 @@ public interface ICreatioForwarder
     Task SetMetaMessageIdAsync(CreatioInstance instance, string phoneNumber, string message, string metaMessageId, CancellationToken ct = default);
     Task<string> GetMessagesAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default);
     Task<string> AgentReplyAsync(CreatioInstance instance, string phoneNumber, string message, CancellationToken ct = default);
+    Task RequestAgentAsync(CreatioInstance instance, string phoneNumber, string customerName, CancellationToken ct = default);
+    Task HeartbeatAsync(CreatioInstance instance, string contactId, CancellationToken ct = default);
+    Task SetOnlineAsync(CreatioInstance instance, string contactId, bool isOnline, CancellationToken ct = default);
+    Task<string> GetMyChatsAsync(CreatioInstance instance, string contactId, CancellationToken ct = default);
+    Task<string> CloseChatAsync(CreatioInstance instance, string agentChatId, string contactId, CancellationToken ct = default);
 }
 
 public class CreatioForwarder : ICreatioForwarder
@@ -182,6 +187,49 @@ public class CreatioForwarder : ICreatioForwarder
 
         _authCache.Set(instance.Id, tokenResponse.AccessToken, tokenResponse.ExpiresIn > 0 ? tokenResponse.ExpiresIn : 3600);
         _logger.LogInformation("OAuth token acquired for Creatio instance {Name}", instance.Name);
+    }
+
+    public async Task RequestAgentAsync(CreatioInstance instance, string phoneNumber, string customerName, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/RequestAgent";
+        var response = await PostToCreatioAsync(instance, endpoint, new { phoneNumber, customerName }, ct);
+        if (!response.IsSuccessStatusCode)
+            _logger.LogWarning("RequestAgent failed {Status}", response.StatusCode);
+    }
+
+    public async Task HeartbeatAsync(CreatioInstance instance, string contactId, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/Heartbeat";
+        var response = await PostToCreatioAsync(instance, endpoint, new { contactId }, ct);
+        if (!response.IsSuccessStatusCode)
+            _logger.LogWarning("Heartbeat failed {Status}", response.StatusCode);
+    }
+
+    public async Task SetOnlineAsync(CreatioInstance instance, string contactId, bool isOnline, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/SetOnline";
+        var response = await PostToCreatioAsync(instance, endpoint, new { contactId, isOnline }, ct);
+        if (!response.IsSuccessStatusCode)
+            _logger.LogWarning("SetOnline failed {Status}", response.StatusCode);
+    }
+
+    public async Task<string> GetMyChatsAsync(CreatioInstance instance, string contactId, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/GetMyChats";
+        var response = await PostToCreatioAsync(instance, endpoint, new { contactId }, ct);
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    public async Task<string> CloseChatAsync(CreatioInstance instance, string agentChatId, string contactId, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/CloseChat";
+        var response = await PostToCreatioAsync(instance, endpoint, new { agentChatId, contactId }, ct);
+        return await response.Content.ReadAsStringAsync(ct);
     }
 
     private sealed class OAuthTokenResponse

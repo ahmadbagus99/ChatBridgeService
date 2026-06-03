@@ -18,10 +18,10 @@ public class SendController : ControllerBase
         _logger = logger;
     }
 
-    [HttpPost("send/{apiKey}/text")]
-    public async Task<IActionResult> Text(string apiKey, [FromBody] SendTextRequest request, CancellationToken ct)
+    [HttpPost("send/text")]
+    public async Task<IActionResult> Text([FromBody] SendTextRequest request, CancellationToken ct)
     {
-        var instance = await ResolveInstanceAsync(apiKey, ct);
+        var instance = await ResolveInstanceAsync(ct);
         if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || string.IsNullOrEmpty(request.Body))
             return BadRequest(new { error = "Fields 'To' and 'Body' are required" });
@@ -31,10 +31,10 @@ public class SendController : ControllerBase
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    [HttpPost("send/{apiKey}/buttons")]
-    public async Task<IActionResult> Buttons(string apiKey, [FromBody] SendButtonsRequest request, CancellationToken ct)
+    [HttpPost("send/buttons")]
+    public async Task<IActionResult> Buttons([FromBody] SendButtonsRequest request, CancellationToken ct)
     {
-        var instance = await ResolveInstanceAsync(apiKey, ct);
+        var instance = await ResolveInstanceAsync(ct);
         if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || request.Buttons.Count == 0)
             return BadRequest(new { error = "Fields 'To' and at least 1 button are required" });
@@ -44,10 +44,10 @@ public class SendController : ControllerBase
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    [HttpPost("send/{apiKey}/list")]
-    public async Task<IActionResult> List(string apiKey, [FromBody] SendListRequest request, CancellationToken ct)
+    [HttpPost("send/list")]
+    public async Task<IActionResult> List([FromBody] SendListRequest request, CancellationToken ct)
     {
-        var instance = await ResolveInstanceAsync(apiKey, ct);
+        var instance = await ResolveInstanceAsync(ct);
         if (instance == null) return Unauthorized(new { error = "Invalid API key" });
         if (string.IsNullOrEmpty(request.To) || request.Rows.Count == 0)
             return BadRequest(new { error = "Fields 'To' and at least 1 row are required" });
@@ -57,6 +57,61 @@ public class SendController : ControllerBase
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 
-    private Task<ChatBridgeService.Models.CreatioInstance?> ResolveInstanceAsync(string apiKey, CancellationToken ct) =>
-        _instances.GetByApiKeyAsync(apiKey, ct);
+    [HttpPost("send/image")]
+    public async Task<IActionResult> Image([FromBody] SendImageRequest request, CancellationToken ct)
+    {
+        var instance = await ResolveInstanceAsync(ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
+        if (string.IsNullOrEmpty(request.To) || string.IsNullOrEmpty(request.MediaUrl))
+            return BadRequest(new { error = "Fields 'To' and 'MediaUrl' are required" });
+
+        _logger.LogInformation("[{Name}] Send image ke {To}", instance.Name, request.To);
+        var result = await _sender.SendImageAsync(instance, request, ct);
+        return result.Success ? Ok(result) : StatusCode(502, result);
+    }
+
+    [HttpPost("send/document")]
+    public async Task<IActionResult> Document([FromBody] SendDocumentRequest request, CancellationToken ct)
+    {
+        var instance = await ResolveInstanceAsync(ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
+        if (string.IsNullOrEmpty(request.To) || string.IsNullOrEmpty(request.MediaUrl))
+            return BadRequest(new { error = "Fields 'To' and 'MediaUrl' are required" });
+
+        _logger.LogInformation("[{Name}] Send document ke {To}", instance.Name, request.To);
+        var result = await _sender.SendDocumentAsync(instance, request, ct);
+        return result.Success ? Ok(result) : StatusCode(502, result);
+    }
+
+    [HttpPost("send/location")]
+    public async Task<IActionResult> Location([FromBody] SendLocationRequest request, CancellationToken ct)
+    {
+        var instance = await ResolveInstanceAsync(ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
+        if (string.IsNullOrEmpty(request.To))
+            return BadRequest(new { error = "Field 'To' is required" });
+
+        _logger.LogInformation("[{Name}] Send location ke {To}", instance.Name, request.To);
+        var result = await _sender.SendLocationAsync(instance, request, ct);
+        return result.Success ? Ok(result) : StatusCode(502, result);
+    }
+
+    [HttpPost("send/cta")]
+    public async Task<IActionResult> Cta([FromBody] SendCtaRequest request, CancellationToken ct)
+    {
+        var instance = await ResolveInstanceAsync(ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
+        if (string.IsNullOrEmpty(request.To) || string.IsNullOrEmpty(request.Url))
+            return BadRequest(new { error = "Fields 'To' and 'Url' are required" });
+
+        _logger.LogInformation("[{Name}] Send cta ke {To}", instance.Name, request.To);
+        var result = await _sender.SendCtaAsync(instance, request, ct);
+        return result.Success ? Ok(result) : StatusCode(502, result);
+    }
+
+    private Task<ChatBridgeService.Models.CreatioInstance?> ResolveInstanceAsync(CancellationToken ct)
+    {
+        string apiKey = Request.Headers["X-Api-Key"].FirstOrDefault() ?? "";
+        return _instances.GetByApiKeyAsync(apiKey, ct);
+    }
 }
