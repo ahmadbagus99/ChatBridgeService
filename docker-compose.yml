@@ -1,0 +1,19 @@
+services:
+  chatbridge:
+    image: chatbridge:latest
+    build: .
+    container_name: chatbridge
+    restart: unless-stopped
+    ports:
+      - "5051:8080"
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__Default=Host=creatio-postgres;Port=5432;Database=chatbridge;Username=creatio_user;Password=CreatioStr0ngPass!
+      - Admin__Username=admin
+      - Admin__Password=sahwqe@8&2938u2h1
+    networks:
+      - shared_creatio-shared
+
+networks:
+  shared_creatio-shared:
+    external: true
