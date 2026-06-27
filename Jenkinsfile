@@ -10,7 +10,7 @@ pipeline {
     stages {
         stage('Deploy') {
             steps {
-                sshagent(credentials: ['vps-chatbridge']) {
+                sshagent(credentials: ['creatio-server']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
                             cd ${DEPLOY_DIR}
