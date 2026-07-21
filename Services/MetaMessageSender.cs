@@ -176,13 +176,16 @@ public class MetaMessageSender : IMetaMessageSender
 
     private async Task<SendResponse> PostAsync(CreatioInstance instance, string? overridePhoneNumberId, object payload, CancellationToken ct)
     {
-        string phoneNumberId = overridePhoneNumberId ?? instance.MetaPhoneNumberId;
-        string accessToken = instance.MetaAccessToken;
+        bool useKirimDev = string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+        string phoneNumberId = overridePhoneNumberId ?? (useKirimDev ? instance.KirimDevPhoneNumberId : instance.MetaPhoneNumberId);
+        string accessToken = useKirimDev ? instance.KirimDevApiKey : instance.MetaAccessToken;
 
         if (string.IsNullOrEmpty(phoneNumberId) || string.IsNullOrEmpty(accessToken))
-            return new SendResponse { Success = false, Error = "MetaPhoneNumberId or MetaAccessToken not configured for this instance" };
+            return new SendResponse { Success = false, Error = $"{(useKirimDev ? "KirimDev" : "Meta")} phone number ID or access token not configured for this instance" };
 
-        string url = $"https://graph.facebook.com/v20.0/{phoneNumberId}/messages";
+        string url = useKirimDev
+            ? $"https://api.kirimdev.com/v1/{phoneNumberId}/messages"
+            : $"https://graph.facebook.com/v20.0/{phoneNumberId}/messages";
         var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", accessToken) },
@@ -195,14 +198,20 @@ public class MetaMessageSender : IMetaMessageSender
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError("Meta API error {Status}: {Body}", response.StatusCode, body);
+            _logger.LogError("{Provider} API error {Status}: {Body}", useKirimDev ? "KirimDev" : "Meta", response.StatusCode, body);
             await _log.LogAsync(instance.Id, "error_meta", phoneNumberId?[..Math.Min(50, phoneNumberId.Length)], false,
-                $"Meta API {(int)response.StatusCode}: {body[..Math.Min(300, body.Length)]}");
-            return new SendResponse { Success = false, Error = $"Meta API {(int)response.StatusCode}: {body}" };
+                $"{(useKirimDev ? "KirimDev" : "Meta")} API {(int)response.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            return new SendResponse { Success = false, Error = $"{(useKirimDev ? "KirimDev" : "Meta")} API {(int)response.StatusCode}: {body}" };
         }
 
         string? metaMessageId = null;
-        try { metaMessageId = JsonNode.Parse(body)?["messages"]?[0]?["id"]?.GetValue<string>(); }
+        try
+        {
+            var json = JsonNode.Parse(body);
+            metaMessageId = json?["messages"]?[0]?["id"]?.GetValue<string>()
+                ?? json?["data"]?["id"]?.GetValue<string>()
+                ?? json?["id"]?.GetValue<string>();
+        }
         catch { }
 
         await _log.LogAsync(instance.Id, "agent_reply", phoneNumberId, true, $"MetaMessageId: {metaMessageId}");

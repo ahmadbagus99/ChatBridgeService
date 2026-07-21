@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using ChatBridgeService.Models;
 using ChatBridgeService.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -52,17 +54,34 @@ public class WebhookController : ControllerBase
         var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
         if (instance == null) return NotFound();
 
-        MetaWebhookPayload? payload;
+        string rawBody;
         try
         {
-            payload = await JsonSerializer.DeserializeAsync<MetaWebhookPayload>(
-                Request.Body,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
-                ct);
+            using var reader = new StreamReader(Request.Body, Encoding.UTF8);
+            rawBody = await reader.ReadToEndAsync(ct);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse Meta webhook payload for instance {Name}", instance.Name);
+            _logger.LogError(ex, "Failed to read webhook payload for instance {Name}", instance.Name);
+            return Ok();
+        }
+
+        if (IsKirimDev(instance) && !VerifyKirimDevSignature(instance, rawBody))
+        {
+            _logger.LogWarning("KirimDev webhook signature failed for instance {Name}", instance.Name);
+            return Unauthorized();
+        }
+
+        MetaWebhookPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<MetaWebhookPayload>(
+                rawBody,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse webhook payload for instance {Name}", instance.Name);
             return Ok();
         }
 
@@ -105,5 +124,44 @@ public class WebhookController : ControllerBase
         }, CancellationToken.None);
 
         return Ok();
+    }
+
+    private static bool IsKirimDev(CreatioInstance instance) =>
+        string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+
+    private bool VerifyKirimDevSignature(CreatioInstance instance, string rawBody)
+    {
+        if (string.IsNullOrWhiteSpace(instance.KirimDevWebhookSecret))
+        {
+            _logger.LogWarning("KirimDev webhook secret is empty for instance {Name}; skipping signature verification", instance.Name);
+            return true;
+        }
+
+        string signatureHeader = Request.Headers["X-Kirim-Signature"].FirstOrDefault() ?? "";
+        if (string.IsNullOrWhiteSpace(signatureHeader)) return false;
+
+        string? timestamp = null;
+        var signatures = new List<string>();
+        foreach (var part in signatureHeader.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var kv = part.Split('=', 2);
+            if (kv.Length != 2) continue;
+            if (kv[0] == "t") timestamp = kv[1];
+            if (kv[0] == "v1") signatures.Add(kv[1]);
+        }
+
+        if (string.IsNullOrWhiteSpace(timestamp) || signatures.Count == 0) return false;
+
+        string signedPayload = $"{timestamp}.{rawBody}";
+        byte[] secretBytes = Encoding.UTF8.GetBytes(instance.KirimDevWebhookSecret);
+        byte[] payloadBytes = Encoding.UTF8.GetBytes(signedPayload);
+        byte[] expectedBytes = HMACSHA256.HashData(secretBytes, payloadBytes);
+        string expectedHex = Convert.ToHexString(expectedBytes).ToLowerInvariant();
+
+        return signatures.Any(sig =>
+            sig.Length == expectedHex.Length &&
+            CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(sig.ToLowerInvariant()),
+                Encoding.UTF8.GetBytes(expectedHex)));
     }
 }

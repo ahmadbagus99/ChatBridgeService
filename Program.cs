@@ -5,6 +5,19 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("CreatioLocal", policy =>
+    {
+        var origins = builder.Configuration
+            .GetSection("Cors:AllowedOrigins")
+            .Get<string[]>() ?? new[] { "http://localhost:8080", "https://localhost:8443" };
+
+        policy.WithOrigins(origins)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 
 // Database
 builder.Services.AddDbContext<AppDbContext>(opt =>
@@ -39,6 +52,7 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseRouting();
+app.UseCors("CreatioLocal");
 app.MapControllers();
 
 app.Run();

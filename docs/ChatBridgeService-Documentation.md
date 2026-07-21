@@ -216,7 +216,16 @@ The table below shows per-instance breakdown.
 | Username | Creatio login username | `Supervisor` |
 | Password | Creatio login password | `Supervisor1!` |
 
-**Meta WhatsApp Configuration**
+**WhatsApp Provider Configuration**
+
+Choose the provider for each instance:
+
+| Provider | Use When |
+|----------|----------|
+| `Meta Cloud API` | You connect directly to Meta and manage the WABA, token, phone number, and webhook yourself |
+| `KirimDev` | You connect the WhatsApp number in KirimDev and use KirimDev API keys/webhooks |
+
+**Meta Cloud API Configuration**
 
 | Field | Description | Example |
 |-------|-------------|---------|
@@ -224,12 +233,20 @@ The table below shows per-instance breakdown.
 | Phone Number ID | Meta WhatsApp phone number ID (not the phone number itself) | `123456789012345` |
 | Verify Token | Secret token used to verify the webhook handshake | `my-secret-verify-token` |
 
+**KirimDev Configuration**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| API Key | KirimDev API key from the dashboard | `kdv_live_xxxxx...` |
+| Phone Number ID | Connected WhatsApp phone number ID from KirimDev | `106540352242922` |
+| Webhook Secret | Secret returned when creating the KirimDev webhook subscription | `whsec_xxxxx...` |
+
 4. Click **Create Instance**
 5. Copy the **API Key** — it will be used in all URLs for this instance
 
-### 5.4 Configure Meta Webhook
+### 5.4 Configure WhatsApp Webhook
 
-In the [Meta Developer Console](https://developers.facebook.com):
+For Meta Cloud API, configure the webhook in the [Meta Developer Console](https://developers.facebook.com):
 
 1. Go to your App → WhatsApp → Configuration
 2. Set the Webhook URL to:
@@ -238,6 +255,14 @@ In the [Meta Developer Console](https://developers.facebook.com):
    ```
 3. Set the Verify Token to the same value as `Verify Token` in the instance config
 4. Subscribe to the `messages` field
+
+For KirimDev, create a webhook subscription in the KirimDev dashboard/API and point it to the same URL:
+
+```
+https://your-domain.com/webhook/{apiKey}
+```
+
+Subscribe to message received/status events. KirimDev `X-Kirim-Source: meta` webhook bodies are parsed using the same Meta webhook parser.
 
 ### 5.5 Logs
 

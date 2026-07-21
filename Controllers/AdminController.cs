@@ -117,9 +117,13 @@ public class AdminController : ControllerBase
             CreatioIdentityUrl = dto.CreatioIdentityUrl?.TrimEnd('/') ?? "",
             CreatioClientId = dto.CreatioClientId ?? "",
             CreatioClientSecret = dto.CreatioClientSecret ?? "",
+            WhatsAppProvider = NormalizeWhatsAppProvider(dto.WhatsAppProvider),
             MetaAccessToken = dto.MetaAccessToken ?? "",
             MetaPhoneNumberId = dto.MetaPhoneNumberId ?? "",
             MetaVerifyToken = dto.MetaVerifyToken ?? "",
+            KirimDevApiKey = dto.KirimDevApiKey ?? "",
+            KirimDevPhoneNumberId = dto.KirimDevPhoneNumberId ?? "",
+            KirimDevWebhookSecret = dto.KirimDevWebhookSecret ?? "",
             IsActive = dto.IsActive
         }, ct);
         return Redirect("/admin/instances");
@@ -147,9 +151,13 @@ public class AdminController : ControllerBase
         instance.CreatioIdentityUrl = dto.CreatioIdentityUrl?.TrimEnd('/') ?? instance.CreatioIdentityUrl;
         instance.CreatioClientId = dto.CreatioClientId ?? instance.CreatioClientId;
         if (!string.IsNullOrWhiteSpace(dto.CreatioClientSecret)) instance.CreatioClientSecret = dto.CreatioClientSecret;
+        instance.WhatsAppProvider = NormalizeWhatsAppProvider(dto.WhatsAppProvider);
         instance.MetaAccessToken = dto.MetaAccessToken ?? instance.MetaAccessToken;
         instance.MetaPhoneNumberId = dto.MetaPhoneNumberId ?? instance.MetaPhoneNumberId;
         instance.MetaVerifyToken = dto.MetaVerifyToken ?? instance.MetaVerifyToken;
+        instance.KirimDevApiKey = dto.KirimDevApiKey ?? instance.KirimDevApiKey;
+        instance.KirimDevPhoneNumberId = dto.KirimDevPhoneNumberId ?? instance.KirimDevPhoneNumberId;
+        instance.KirimDevWebhookSecret = dto.KirimDevWebhookSecret ?? instance.KirimDevWebhookSecret;
         instance.IsActive = dto.IsActive;
 
         await _instances.UpdateAsync(instance, ct);
@@ -199,6 +207,9 @@ public class AdminController : ControllerBase
     private static string GenerateApiKey() =>
         Convert.ToBase64String(Guid.NewGuid().ToByteArray())
             .Replace("+", "").Replace("/", "").Replace("=", "")[..16];
+
+    private static string NormalizeWhatsAppProvider(string? provider) =>
+        string.Equals(provider, "KirimDev", StringComparison.OrdinalIgnoreCase) ? "KirimDev" : "MetaCloud";
 
     private static string H(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
 
@@ -274,6 +285,7 @@ input:focus,select:focus{outline:none;border-color:#7c3aed;box-shadow:0 0 0 3px 
 .log-webhook_in{background:#dbeafe;color:#1d4ed8}
 .log-agent_reply{background:#dcfce7;color:#15803d}
 .log-error_creatio,.log-error_meta{background:#fee2e2;color:#dc2626}
+.hidden{display:none!important}
 </style>
 </head>
 <body>
@@ -396,17 +408,19 @@ button:hover{background:#6d28d9}
     private static string BuildInstancesHtml(List<CreatioInstance> list)
     {
         string rows = list.Count == 0
-            ? "<tr><td colspan='5' class='empty'>No instances yet. Click \"Add Instance\" to get started.</td></tr>"
+            ? "<tr><td colspan='6' class='empty'>No instances yet. Click \"Add Instance\" to get started.</td></tr>"
             : string.Join("", list.Select(i =>
             {
                 string status = i.IsActive
                     ? "<span class=\"badge badge-green\">Active</span>"
                     : "<span class=\"badge badge-gray\">Inactive</span>";
+                string provider = NormalizeWhatsAppProvider(i.WhatsAppProvider);
                 return $"""
                     <tr>
                       <td><strong>{H(i.Name)}</strong></td>
                       <td><span class="mono">{H(i.ApiKey)}</span></td>
                       <td>{H(i.CreatioBaseUrl)}</td>
+                      <td><span class="badge badge-blue">{H(provider == "KirimDev" ? "KirimDev" : "Meta")}</span></td>
                       <td>{status}</td>
                       <td>
                         <a href="/admin/instances/{i.Id}/edit" class="btn btn-secondary btn-sm">Edit</a>
@@ -425,7 +439,7 @@ button:hover{background:#6d28d9}
             </div>
             <div class="card" style="padding:0;overflow:hidden">
               <table>
-                <thead><tr><th>Name</th><th>API Key</th><th>Creatio URL</th><th>Status</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Name</th><th>API Key</th><th>Creatio URL</th><th>WA Provider</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>{rows}</tbody>
               </table>
             </div>
@@ -444,6 +458,25 @@ button:hover{background:#6d28d9}
         string selActive = inst?.IsActive != false ? "selected" : "";
         string selInactive = inst?.IsActive == false ? "selected" : "";
         string secretPlaceholder = isEdit ? "Leave blank to keep current" : "Client Secret";
+        string provider = NormalizeWhatsAppProvider(inst?.WhatsAppProvider);
+        string selMeta = provider == "MetaCloud" ? "selected" : "";
+        string selKirimDev = provider == "KirimDev" ? "selected" : "";
+        const string providerToggleScript = """
+            <script>
+            (function(){
+              var provider = document.getElementById('whatsapp-provider');
+              var meta = document.getElementById('meta-config');
+              var kirimdev = document.getElementById('kirimdev-config');
+              function syncProviderConfig(){
+                var useKirimDev = provider.value === 'KirimDev';
+                meta.classList.toggle('hidden', useKirimDev);
+                kirimdev.classList.toggle('hidden', !useKirimDev);
+              }
+              provider.addEventListener('change', syncProviderConfig);
+              syncProviderConfig();
+            })();
+            </script>
+            """;
 
         string content = $"""
             <div style="margin-bottom:16px">
@@ -495,7 +528,17 @@ button:hover{background:#6d28d9}
               </div>
             </div>
             <div class="card">
-              <div style="font-weight:700;font-size:14px;margin-bottom:16px">Meta WhatsApp Configuration</div>
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">WhatsApp Provider</div>
+              <div class="input-group">
+                <label>Provider</label>
+                <select id="whatsapp-provider" name="WhatsAppProvider">
+                  <option value="MetaCloud" {selMeta}>Meta Cloud API</option>
+                  <option value="KirimDev" {selKirimDev}>KirimDev</option>
+                </select>
+              </div>
+            </div>
+            <div id="meta-config" class="card">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">Meta Cloud API Configuration</div>
               <div class="input-group">
                 <label>Access Token</label>
                 <input name="MetaAccessToken" value="{H(inst?.MetaAccessToken)}" placeholder="EAAxxxxx...">
@@ -511,11 +554,29 @@ button:hover{background:#6d28d9}
                 </div>
               </div>
             </div>
+            <div id="kirimdev-config" class="card">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">KirimDev Configuration</div>
+              <div class="input-group">
+                <label>API Key</label>
+                <input name="KirimDevApiKey" value="{H(inst?.KirimDevApiKey)}" placeholder="kdv_live_...">
+              </div>
+              <div class="form-row">
+                <div class="input-group">
+                  <label>Phone Number ID</label>
+                  <input name="KirimDevPhoneNumberId" value="{H(inst?.KirimDevPhoneNumberId)}" placeholder="106540352242922">
+                </div>
+                <div class="input-group">
+                  <label>Webhook Secret</label>
+                  <input name="KirimDevWebhookSecret" value="{H(inst?.KirimDevWebhookSecret)}" placeholder="Secret dari webhook subscription">
+                </div>
+              </div>
+            </div>
             <div style="display:flex;gap:10px">
               <button type="submit" class="btn btn-primary">{(isEdit ? "Save Changes" : "Create Instance")}</button>
               <a href="/admin/instances" class="btn btn-secondary">Cancel</a>
             </div>
             </form>
+            {providerToggleScript}
             """;
         return Layout("instances", pageTitle, content);
     }
@@ -611,9 +672,13 @@ public class InstanceFormDto
     public string? CreatioIdentityUrl { get; set; }
     public string? CreatioClientId { get; set; }
     public string? CreatioClientSecret { get; set; }
+    public string? WhatsAppProvider { get; set; }
     public string? MetaAccessToken { get; set; }
     public string? MetaPhoneNumberId { get; set; }
     public string? MetaVerifyToken { get; set; }
+    public string? KirimDevApiKey { get; set; }
+    public string? KirimDevPhoneNumberId { get; set; }
+    public string? KirimDevWebhookSecret { get; set; }
     public bool IsActive { get; set; } = true;
 }
 

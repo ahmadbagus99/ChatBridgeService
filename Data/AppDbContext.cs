@@ -33,9 +33,13 @@ public class AppDbContext : DbContext
             e.Property(x => x.CreatioIdentityUrl).HasMaxLength(500).IsRequired();
             e.Property(x => x.CreatioClientId).HasMaxLength(200).IsRequired();
             e.Property(x => x.CreatioClientSecret).HasMaxLength(500).IsRequired();
+            e.Property(x => x.WhatsAppProvider).HasMaxLength(50).IsRequired();
             e.Property(x => x.MetaAccessToken).HasMaxLength(1000);
             e.Property(x => x.MetaPhoneNumberId).HasMaxLength(100);
             e.Property(x => x.MetaVerifyToken).HasMaxLength(200);
+            e.Property(x => x.KirimDevApiKey).HasMaxLength(1000);
+            e.Property(x => x.KirimDevPhoneNumberId).HasMaxLength(100);
+            e.Property(x => x.KirimDevWebhookSecret).HasMaxLength(500);
         });
     }
 }

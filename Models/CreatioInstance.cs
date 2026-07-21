@@ -15,9 +15,15 @@ public class CreatioInstance
     public string CreatioClientSecret { get; set; } = "";
 
     // Meta WhatsApp Cloud API credentials
+    public string WhatsAppProvider { get; set; } = "MetaCloud";
     public string MetaAccessToken { get; set; } = "";
     public string MetaPhoneNumberId { get; set; } = "";
     public string MetaVerifyToken { get; set; } = "";
+
+    // KirimDev WhatsApp API credentials
+    public string KirimDevApiKey { get; set; } = "";
+    public string KirimDevPhoneNumberId { get; set; } = "";
+    public string KirimDevWebhookSecret { get; set; } = "";
 
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
