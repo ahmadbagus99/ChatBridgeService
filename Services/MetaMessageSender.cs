@@ -45,6 +45,7 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendButtonsAsync(CreatioInstance instance, SendButtonsRequest request, CancellationToken ct = default)
     {
+        bool useKirimDev = IsKirimDev(instance);
         var buttons = request.Buttons
             .Take(3)
             .Select(b => new
@@ -61,7 +62,9 @@ public class MetaMessageSender : IMetaMessageSender
             type = "interactive",
             interactive = new
             {
-                type = "button",
+                // KirimDev validates quick replies as "reply_buttons", while
+                // Meta Cloud API uses the original "button" discriminator.
+                type = useKirimDev ? "reply_buttons" : "button",
                 body = new { text = request.BodyText },
                 action = new { buttons }
             }
@@ -176,7 +179,7 @@ public class MetaMessageSender : IMetaMessageSender
 
     private async Task<SendResponse> PostAsync(CreatioInstance instance, string? overridePhoneNumberId, object payload, CancellationToken ct)
     {
-        bool useKirimDev = string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+        bool useKirimDev = IsKirimDev(instance);
         string phoneNumberId = overridePhoneNumberId ?? (useKirimDev ? instance.KirimDevPhoneNumberId : instance.MetaPhoneNumberId);
         string accessToken = useKirimDev ? instance.KirimDevApiKey : instance.MetaAccessToken;
 
@@ -217,4 +220,7 @@ public class MetaMessageSender : IMetaMessageSender
         await _log.LogAsync(instance.Id, "agent_reply", phoneNumberId, true, $"MetaMessageId: {metaMessageId}");
         return new SendResponse { Success = true, MetaMessageId = metaMessageId };
     }
+
+    private static bool IsKirimDev(CreatioInstance instance) =>
+        string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
 }
