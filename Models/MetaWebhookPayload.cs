@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace ChatBridgeService.Models;
 
 public class MetaWebhookPayload
@@ -20,6 +22,7 @@ public class Change
 
 public class ChangeValue
 {
+    [JsonPropertyName("messaging_product")]
     public string MessagingProduct { get; set; } = string.Empty;
     public Metadata Metadata { get; set; } = new();
     public List<Contact> Contacts { get; set; } = [];
@@ -29,7 +32,10 @@ public class ChangeValue
 
 public class Metadata
 {
+    [JsonPropertyName("display_phone_number")]
     public string DisplayPhoneNumber { get; set; } = string.Empty;
+
+    [JsonPropertyName("phone_number_id")]
     public string PhoneNumberId { get; set; } = string.Empty;
 }
 
@@ -65,6 +71,8 @@ public class TextContent
 public class ImageContent
 {
     public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("mime_type")]
     public string MimeType { get; set; } = string.Empty;
     public string Caption { get; set; } = string.Empty;
 }
@@ -74,19 +82,27 @@ public class DocumentContent
     public string Id { get; set; } = string.Empty;
     public string Filename { get; set; } = string.Empty;
     public string Caption { get; set; } = string.Empty;
+
+    [JsonPropertyName("mime_type")]
     public string MimeType { get; set; } = string.Empty;
 }
 
 public class AudioContent
 {
     public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("mime_type")]
     public string MimeType { get; set; } = string.Empty;
 }
 
 public class InteractiveContent
 {
     public string Type { get; set; } = string.Empty;
+
+    [JsonPropertyName("button_reply")]
     public ButtonReply? ButtonReply { get; set; }
+
+    [JsonPropertyName("list_reply")]
     public ListReply? ListReply { get; set; }
 }
 
@@ -107,6 +123,8 @@ public class MessageStatus
     public string Id { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string Timestamp { get; set; } = string.Empty;
+
+    [JsonPropertyName("recipient_id")]
     public string RecipientId { get; set; } = string.Empty;
     public List<MetaStatusError> Errors { get; set; } = [];
 }
