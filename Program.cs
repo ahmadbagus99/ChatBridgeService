@@ -31,6 +31,7 @@ builder.Services.AddScoped<IMetaMessageSender, MetaMessageSender>();
 builder.Services.AddSingleton<CreatioAuthCache>();
 builder.Services.AddSingleton<AdminSession>();
 builder.Services.AddScoped<ILogService, LogService>();
+builder.Services.AddHostedService<AutoCloseChatWorker>();
 
 // HTTP clients
 builder.Services.AddHttpClient("creatio", client => client.Timeout = TimeSpan.FromSeconds(30));

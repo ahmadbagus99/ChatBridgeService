@@ -16,6 +16,7 @@ public interface ICreatioForwarder
     Task SetOnlineAsync(CreatioInstance instance, string contactId, bool isOnline, CancellationToken ct = default);
     Task<string> GetMyChatsAsync(CreatioInstance instance, string contactId, CancellationToken ct = default);
     Task<string> CloseChatAsync(CreatioInstance instance, string agentChatId, string contactId, CancellationToken ct = default);
+    Task<string> ProcessAutoCloseChatsAsync(CreatioInstance instance, CancellationToken ct = default);
 }
 
 public class CreatioForwarder : ICreatioForwarder
@@ -230,6 +231,22 @@ public class CreatioForwarder : ICreatioForwarder
         string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/CloseChat";
         var response = await PostToCreatioAsync(instance, endpoint, new { agentChatId, contactId }, ct);
         return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    public async Task<string> ProcessAutoCloseChatsAsync(CreatioInstance instance, CancellationToken ct = default)
+    {
+        await EnsureAuthenticatedAsync(instance, ct);
+        string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeAgentService/ProcessAutoCloseChats";
+        var response = await PostToCreatioAsync(instance, endpoint, new { }, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("ProcessAutoCloseChats failed for {Name} {Status}: {Body}",
+                instance.Name, response.StatusCode, body);
+        }
+
+        return body;
     }
 
     private sealed class OAuthTokenResponse
