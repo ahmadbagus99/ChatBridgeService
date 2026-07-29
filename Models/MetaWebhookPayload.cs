@@ -42,6 +42,8 @@ public class Metadata
 public class Contact
 {
     public ContactProfile Profile { get; set; } = new();
+
+    [JsonPropertyName("wa_id")]
     public string WaId { get; set; } = string.Empty;
 }
 

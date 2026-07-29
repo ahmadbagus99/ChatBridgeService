@@ -15,6 +15,12 @@ public interface IMetaMessageSender
     Task<SendResponse> SendDocumentAsync(CreatioInstance instance, SendDocumentRequest request, CancellationToken ct = default);
     Task<SendResponse> SendLocationAsync(CreatioInstance instance, SendLocationRequest request, CancellationToken ct = default);
     Task<SendResponse> SendCtaAsync(CreatioInstance instance, SendCtaRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Marks a KirimDev conversation as resolved. No-op for Meta Cloud API instances,
+    /// which have no equivalent conversation-status concept.
+    /// </summary>
+    Task<SendResponse> ResolveConversationAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default);
 }
 
 public class MetaMessageSender : IMetaMessageSender
@@ -134,6 +140,26 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendLocationAsync(CreatioInstance instance, SendLocationRequest request, CancellationToken ct = default)
     {
+        if (IsKirimDev(instance))
+        {
+            string mapUrl = $"https://www.google.com/maps/search/?api=1&query={request.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)},{request.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(request.Name)) lines.Add(request.Name!.Trim());
+            if (!string.IsNullOrWhiteSpace(request.Address)) lines.Add(request.Address!.Trim());
+            lines.Add(mapUrl);
+
+            var fallbackPayload = new
+            {
+                messaging_product = "whatsapp",
+                recipient_type = "individual",
+                to = request.To,
+                type = "text",
+                text = new { preview_url = true, body = string.Join("\n", lines) }
+            };
+
+            return PostAsync(instance, request.PhoneNumberId, fallbackPayload, ct);
+        }
+
         var location = new Dictionary<string, object>
         {
             ["latitude"] = request.Latitude,
@@ -175,6 +201,37 @@ public class MetaMessageSender : IMetaMessageSender
             }
         };
         return PostAsync(instance, request.PhoneNumberId, payload, ct);
+    }
+
+    public async Task<SendResponse> ResolveConversationAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default)
+    {
+        if (!IsKirimDev(instance))
+            return new SendResponse { Success = true, Skipped = true };
+
+        if (string.IsNullOrEmpty(instance.KirimDevPhoneNumberId) || string.IsNullOrEmpty(instance.KirimDevApiKey))
+            return new SendResponse { Success = false, Error = "KirimDev phone number ID or API key not configured for this instance" };
+
+        string url = $"https://api.kirimdev.com/v1/{instance.KirimDevPhoneNumberId}/conversations/{conversationId}";
+        var req = new HttpRequestMessage(HttpMethod.Patch, url)
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", instance.KirimDevApiKey) },
+            Content = new StringContent(JsonSerializer.Serialize(new { status = "resolved" }), Encoding.UTF8, "application/json")
+        };
+
+        var http = _httpClientFactory.CreateClient("meta");
+        var response = await http.SendAsync(req, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("KirimDev resolve conversation {ConversationId} failed {Status}: {Body}",
+                conversationId, response.StatusCode, body);
+            await _log.LogAsync(instance.Id, "error_meta", conversationId, false,
+                $"KirimDev resolve {(int)response.StatusCode}: {body[..Math.Min(300, body.Length)]}");
+            return new SendResponse { Success = false, Error = $"KirimDev API {(int)response.StatusCode}: {body}" };
+        }
+
+        return new SendResponse { Success = true };
     }
 
     private async Task<SendResponse> PostAsync(CreatioInstance instance, string? overridePhoneNumberId, object payload, CancellationToken ct)

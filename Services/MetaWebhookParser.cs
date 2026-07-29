@@ -21,7 +21,12 @@ public class MetaWebhookParser : IMetaWebhookParser
             if (change.Field != "messages") continue;
 
             var value = change.Value;
-            var contactLookup = value.Contacts.ToDictionary(c => c.WaId, c => c.Profile.Name);
+            // Grouped rather than ToDictionary: a payload carrying two entries with the
+            // same wa_id would otherwise throw and fail the whole webhook request.
+            var contactLookup = value.Contacts
+                .Where(c => !string.IsNullOrEmpty(c.WaId))
+                .GroupBy(c => c.WaId)
+                .ToDictionary(g => g.Key, g => g.First().Profile.Name);
 
             foreach (var msg in value.Messages)
             {

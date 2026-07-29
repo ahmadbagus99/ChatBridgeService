@@ -78,4 +78,10 @@ public class SendResponse
     public bool Success { get; set; }
     public string? Error { get; set; }
     public string? MetaMessageId { get; set; }
+    public bool Skipped { get; set; }
+}
+
+public class ResolveConversationRequest
+{
+    public string To { get; set; } = string.Empty;
 }

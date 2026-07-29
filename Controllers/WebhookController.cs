@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Security.Cryptography;
 using System.Text;
 using ChatBridgeService.Models;
@@ -12,17 +13,20 @@ public class WebhookController : ControllerBase
 {
     private readonly IInstanceService _instances;
     private readonly IMetaWebhookParser _parser;
+    private readonly IKirimDevConversationService _kirimDevConversations;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WebhookController> _logger;
 
     public WebhookController(
         IInstanceService instances,
         IMetaWebhookParser parser,
+        IKirimDevConversationService kirimDevConversations,
         IServiceScopeFactory scopeFactory,
         ILogger<WebhookController> logger)
     {
         _instances = instances;
         _parser = parser;
+        _kirimDevConversations = kirimDevConversations;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -92,6 +96,25 @@ public class WebhookController : ControllerBase
         _logger.LogInformation("Received {MsgCount} message(s), {StCount} status update(s) for instance {Name}",
             messages.Count, statuses.Count, instance.Name);
 
+        if (IsKirimDev(instance) && messages.Count > 0)
+        {
+            string? conversationId = TryGetKirimDevConversationId(rawBody);
+            if (!string.IsNullOrEmpty(conversationId))
+            {
+                foreach (var msg in messages)
+                {
+                    try
+                    {
+                        await _kirimDevConversations.UpsertAsync(instance.Id, msg.From, conversationId, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to store KirimDev conversation id for {From}", msg.From);
+                    }
+                }
+            }
+        }
+
         _ = Task.Run(async () =>
         {
             using var scope = _scopeFactory.CreateScope();
@@ -128,6 +151,21 @@ public class WebhookController : ControllerBase
 
     private static bool IsKirimDev(CreatioInstance instance) =>
         string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+
+    // KirimDev enriches the Meta passthrough payload with a top-level "kirim" object,
+    // e.g. { "kirim": { "conversation_id": "cnv_...", ... }, "object": "...", "entry": [...] }.
+    private static string? TryGetKirimDevConversationId(string rawBody)
+    {
+        try
+        {
+            var node = JsonNode.Parse(rawBody);
+            return node?["kirim"]?["conversation_id"]?.GetValue<string>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private bool VerifyKirimDevSignature(CreatioInstance instance, string rawBody)
     {

@@ -9,12 +9,18 @@ public class SendController : ControllerBase
 {
     private readonly IInstanceService _instances;
     private readonly IMetaMessageSender _sender;
+    private readonly IKirimDevConversationService _kirimDevConversations;
     private readonly ILogger<SendController> _logger;
 
-    public SendController(IInstanceService instances, IMetaMessageSender sender, ILogger<SendController> logger)
+    public SendController(
+        IInstanceService instances,
+        IMetaMessageSender sender,
+        IKirimDevConversationService kirimDevConversations,
+        ILogger<SendController> logger)
     {
         _instances = instances;
         _sender = sender;
+        _kirimDevConversations = kirimDevConversations;
         _logger = logger;
     }
 
@@ -106,6 +112,31 @@ public class SendController : ControllerBase
 
         _logger.LogInformation("[{Name}] Send cta ke {To}", instance.Name, request.To);
         var result = await _sender.SendCtaAsync(instance, request, ct);
+        return result.Success ? Ok(result) : StatusCode(502, result);
+    }
+
+    // Called by Creatio when a chat is closed. No-op for Meta Cloud API instances (Meta has
+    // no conversation-status concept); for KirimDev instances, marks the conversation resolved.
+    [HttpPost("send/resolve")]
+    public async Task<IActionResult> Resolve([FromBody] ResolveConversationRequest request, CancellationToken ct)
+    {
+        var instance = await ResolveInstanceAsync(ct);
+        if (instance == null) return Unauthorized(new { error = "Invalid API key" });
+        if (string.IsNullOrEmpty(request.To))
+            return BadRequest(new { error = "Field 'To' is required" });
+
+        if (!string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase))
+            return Ok(new SendResponse { Success = true, Skipped = true });
+
+        string? conversationId = await _kirimDevConversations.GetConversationIdAsync(instance.Id, request.To, ct);
+        if (string.IsNullOrEmpty(conversationId))
+        {
+            _logger.LogWarning("[{Name}] No KirimDev conversation id known for {To}, skipping resolve", instance.Name, request.To);
+            return Ok(new SendResponse { Success = false, Error = "No KirimDev conversation known for this phone number" });
+        }
+
+        _logger.LogInformation("[{Name}] Resolving KirimDev conversation {ConversationId} for {To}", instance.Name, conversationId, request.To);
+        var result = await _sender.ResolveConversationAsync(instance, conversationId, ct);
         return result.Success ? Ok(result) : StatusCode(502, result);
     }
 

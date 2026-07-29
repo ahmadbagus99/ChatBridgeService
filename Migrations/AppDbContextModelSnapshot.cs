@@ -110,6 +110,36 @@ namespace ChatBridgeService.Migrations
                     b.ToTable("CreatioInstances");
                 });
 
+            modelBuilder.Entity("ChatBridgeService.Models.KirimDevConversation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("InstanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InstanceId", "PhoneNumber")
+                        .IsUnique();
+
+                    b.ToTable("KirimDevConversations");
+                });
+
             modelBuilder.Entity("ChatBridgeService.Models.MessageLog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -145,6 +175,17 @@ namespace ChatBridgeService.Migrations
                     b.HasIndex("InstanceId");
 
                     b.ToTable("MessageLogs");
+                });
+
+            modelBuilder.Entity("ChatBridgeService.Models.KirimDevConversation", b =>
+                {
+                    b.HasOne("ChatBridgeService.Models.CreatioInstance", "Instance")
+                        .WithMany()
+                        .HasForeignKey("InstanceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Instance");
                 });
 
             modelBuilder.Entity("ChatBridgeService.Models.MessageLog", b =>

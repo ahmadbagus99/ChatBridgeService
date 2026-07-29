@@ -9,6 +9,7 @@ public class AppDbContext : DbContext
 
     public DbSet<CreatioInstance> CreatioInstances => Set<CreatioInstance>();
     public DbSet<MessageLog> MessageLogs => Set<MessageLog>();
+    public DbSet<KirimDevConversation> KirimDevConversations => Set<KirimDevConversation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +41,15 @@ public class AppDbContext : DbContext
             e.Property(x => x.KirimDevApiKey).HasMaxLength(1000);
             e.Property(x => x.KirimDevPhoneNumberId).HasMaxLength(100);
             e.Property(x => x.KirimDevWebhookSecret).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<KirimDevConversation>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.InstanceId, x.PhoneNumber }).IsUnique();
+            e.Property(x => x.PhoneNumber).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ConversationId).HasMaxLength(200).IsRequired();
+            e.HasOne(x => x.Instance).WithMany().HasForeignKey(x => x.InstanceId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

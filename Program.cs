@@ -28,6 +28,7 @@ builder.Services.AddScoped<IInstanceService, InstanceService>();
 builder.Services.AddScoped<IMetaWebhookParser, MetaWebhookParser>();
 builder.Services.AddScoped<ICreatioForwarder, CreatioForwarder>();
 builder.Services.AddScoped<IMetaMessageSender, MetaMessageSender>();
+builder.Services.AddScoped<IKirimDevConversationService, KirimDevConversationService>();
 builder.Services.AddSingleton<CreatioAuthCache>();
 builder.Services.AddSingleton<AdminSession>();
 builder.Services.AddScoped<ILogService, LogService>();
