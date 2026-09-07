@@ -13,8 +13,9 @@ pipeline {
                 sshagent(credentials: ['creatio-server']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            set -eu
                             cd ${DEPLOY_DIR}
-                            git pull origin main
+                            git pull --ff-only origin main
                             docker compose up -d --build
                             docker image prune -f
                         '
