@@ -13,6 +13,7 @@ public class WebhookController : ControllerBase
 {
     private readonly IInstanceService _instances;
     private readonly IMetaWebhookParser _parser;
+    private readonly ITwilioWebhookParser _twilioParser;
     private readonly IKirimDevConversationService _kirimDevConversations;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WebhookController> _logger;
@@ -20,12 +21,14 @@ public class WebhookController : ControllerBase
     public WebhookController(
         IInstanceService instances,
         IMetaWebhookParser parser,
+        ITwilioWebhookParser twilioParser,
         IKirimDevConversationService kirimDevConversations,
         IServiceScopeFactory scopeFactory,
         ILogger<WebhookController> logger)
     {
         _instances = instances;
         _parser = parser;
+        _twilioParser = twilioParser;
         _kirimDevConversations = kirimDevConversations;
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -57,6 +60,9 @@ public class WebhookController : ControllerBase
     {
         var instance = await _instances.GetByApiKeyAsync(apiKey, ct);
         if (instance == null) return NotFound();
+
+        if (IsTwilio(instance))
+            return await ReceiveTwilio(instance, ct);
 
         string rawBody;
         try
@@ -93,6 +99,8 @@ public class WebhookController : ControllerBase
 
         var messages = _parser.Parse(payload).ToList();
         var statuses = _parser.ParseStatuses(payload).ToList();
+        foreach (var message in messages)
+            message.Provider = instance.WhatsAppProvider;
         _logger.LogInformation("Received {MsgCount} message(s), {StCount} status update(s) for instance {Name}",
             messages.Count, statuses.Count, instance.Name);
 
@@ -115,6 +123,55 @@ public class WebhookController : ControllerBase
             }
         }
 
+        QueueForCreatio(instance, messages, statuses);
+
+        return Ok();
+    }
+
+    private async Task<IActionResult> ReceiveTwilio(CreatioInstance instance, CancellationToken ct)
+    {
+        if (!Request.HasFormContentType)
+            return BadRequest(new { error = "Twilio webhook must use application/x-www-form-urlencoded" });
+
+        var form = await Request.ReadFormAsync(ct);
+        string signature = Request.Headers["X-Twilio-Signature"].FirstOrDefault() ?? "";
+        string requestUrl = BuildExternalRequestUrl();
+
+        bool valid;
+        try
+        {
+            valid = _twilioParser.Validate(instance, requestUrl, form, signature);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Twilio webhook validation failed for instance {Name}", instance.Name);
+            valid = false;
+        }
+
+        if (!valid)
+        {
+            _logger.LogWarning("Rejected invalid Twilio webhook for instance {Name}", instance.Name);
+            return Unauthorized();
+        }
+
+        var messages = new List<IncomingMessage>();
+        var statuses = new List<MessageStatusUpdate>();
+        var message = _twilioParser.ParseMessage(form);
+        var status = _twilioParser.ParseStatus(form);
+        if (message != null) messages.Add(message);
+        if (status != null) statuses.Add(status);
+
+        _logger.LogInformation("Received Twilio webhook with {MsgCount} message(s), {StCount} status update(s) for instance {Name}",
+            messages.Count, statuses.Count, instance.Name);
+        QueueForCreatio(instance, messages, statuses);
+
+        // Twilio accepts an empty TwiML response when ChatBridge sends replies asynchronously.
+        return Content("<Response></Response>", "text/xml; charset=utf-8");
+    }
+
+    private void QueueForCreatio(CreatioInstance instance, List<IncomingMessage> messages,
+        List<MessageStatusUpdate> statuses)
+    {
         _ = Task.Run(async () =>
         {
             using var scope = _scopeFactory.CreateScope();
@@ -145,12 +202,22 @@ public class WebhookController : ControllerBase
                 }
             }
         }, CancellationToken.None);
+    }
 
-        return Ok();
+    private string BuildExternalRequestUrl()
+    {
+        string scheme = Request.Headers["X-Forwarded-Proto"].FirstOrDefault()?.Split(',')[0].Trim()
+            ?? Request.Scheme;
+        string host = Request.Headers["X-Forwarded-Host"].FirstOrDefault()?.Split(',')[0].Trim()
+            ?? Request.Host.Value;
+        return $"{scheme}://{host}{Request.PathBase}{Request.Path}{Request.QueryString}";
     }
 
     private static bool IsKirimDev(CreatioInstance instance) =>
         string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTwilio(CreatioInstance instance) =>
+        string.Equals(instance.WhatsAppProvider, "Twilio", StringComparison.OrdinalIgnoreCase);
 
     // KirimDev enriches the Meta passthrough payload with a top-level "kirim" object,
     // e.g. { "kirim": { "conversation_id": "cnv_...", ... }, "object": "...", "entry": [...] }.

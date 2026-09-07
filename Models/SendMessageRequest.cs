@@ -77,6 +77,9 @@ public class SendResponse
 {
     public bool Success { get; set; }
     public string? Error { get; set; }
+    public string? Provider { get; set; }
+    public string? ProviderMessageId { get; set; }
+    // Backward-compatible alias used by the existing Creatio package/database fields.
     public string? MetaMessageId { get; set; }
     public bool Skipped { get; set; }
 }

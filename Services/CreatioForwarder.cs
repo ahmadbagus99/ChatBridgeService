@@ -41,6 +41,7 @@ public class CreatioForwarder : ICreatioForwarder
         string endpoint = $"{instance.CreatioBaseUrl.TrimEnd('/')}/0/rest/ChatBridgeWebhookService/Receive";
         var payload = new
         {
+            Provider = message.Provider,
             MessageId = message.MessageId,
             PhoneNumberId = message.PhoneNumberId,
             From = message.From,

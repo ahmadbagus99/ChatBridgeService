@@ -25,6 +25,13 @@ public class CreatioInstance
     public string KirimDevPhoneNumberId { get; set; } = "";
     public string KirimDevWebhookSecret { get; set; } = "";
 
+    // Twilio Programmable Messaging credentials
+    public string TwilioAccountSid { get; set; } = "";
+    public string TwilioAuthToken { get; set; } = "";
+    public string TwilioWhatsAppFrom { get; set; } = "";
+    public string TwilioMessagingServiceSid { get; set; } = "";
+    public string TwilioStatusCallbackUrl { get; set; } = "";
+
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

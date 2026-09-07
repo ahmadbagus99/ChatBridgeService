@@ -12,6 +12,7 @@ public enum MessageType
 
 public class IncomingMessage
 {
+    public string Provider { get; set; } = "MetaCloud";
     public string MessageId { get; set; } = string.Empty;
     public string PhoneNumberId { get; set; } = string.Empty;
     public string From { get; set; } = string.Empty;

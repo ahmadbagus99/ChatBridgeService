@@ -41,6 +41,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.KirimDevApiKey).HasMaxLength(1000);
             e.Property(x => x.KirimDevPhoneNumberId).HasMaxLength(100);
             e.Property(x => x.KirimDevWebhookSecret).HasMaxLength(500);
+            e.Property(x => x.TwilioAccountSid).HasMaxLength(100);
+            e.Property(x => x.TwilioAuthToken).HasMaxLength(1000);
+            e.Property(x => x.TwilioWhatsAppFrom).HasMaxLength(100);
+            e.Property(x => x.TwilioMessagingServiceSid).HasMaxLength(100);
+            e.Property(x => x.TwilioStatusCallbackUrl).HasMaxLength(500);
         });
 
         modelBuilder.Entity<KirimDevConversation>(e =>

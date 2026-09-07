@@ -38,6 +38,9 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendTextAsync(CreatioInstance instance, SendTextRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+            return PostTwilioAsync(instance, request.To, request.Body, null, null, request.PhoneNumberId, ct);
+
         var payload = new
         {
             messaging_product = "whatsapp",
@@ -51,13 +54,20 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendButtonsAsync(CreatioInstance instance, SendButtonsRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+        {
+            string body = BuildTwilioOptionsText(request.BodyText,
+                request.Buttons.Take(3).Select((button, index) => $"{index + 1}. {button.Title}"));
+            return PostTwilioAsync(instance, request.To, body, null, null, request.PhoneNumberId, ct);
+        }
+
         bool useKirimDev = IsKirimDev(instance);
         var buttons = request.Buttons
             .Take(3)
             .Select(b => new
             {
                 type = "reply",
-                reply = new { id = b.Id, title = b.Title.Length > 20 ? b.Title[..20] : b.Title }
+                reply = new { id = b.Id, title = WhatsAppText.Clamp(b.Title, 20) }
             });
 
         var payload = new
@@ -80,13 +90,22 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendListAsync(CreatioInstance instance, SendListRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+        {
+            string body = BuildTwilioOptionsText(request.BodyText,
+                request.Rows.Take(10).Select((row, index) => string.IsNullOrWhiteSpace(row.Description)
+                    ? $"{index + 1}. {row.Title}"
+                    : $"{index + 1}. {row.Title} — {row.Description}"));
+            return PostTwilioAsync(instance, request.To, body, null, null, request.PhoneNumberId, ct);
+        }
+
         var rows = request.Rows
             .Take(10)
             .Select(r => new
             {
                 id = r.Id,
-                title = r.Title.Length > 24 ? r.Title[..24] : r.Title,
-                description = r.Description.Length > 72 ? r.Description[..72] : r.Description
+                title = WhatsAppText.Clamp(r.Title, 24),
+                description = WhatsAppText.Clamp(r.Description, 72)
             });
 
         var payload = new
@@ -99,7 +118,7 @@ public class MetaMessageSender : IMetaMessageSender
             {
                 type = "list",
                 body = new { text = request.BodyText },
-                action = new { button = request.ButtonLabel, sections = new[] { new { rows } } }
+                action = new { button = WhatsAppText.Clamp(request.ButtonLabel, 20), sections = new[] { new { rows } } }
             }
         };
         return PostAsync(instance, request.PhoneNumberId, payload, ct);
@@ -107,6 +126,9 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendImageAsync(CreatioInstance instance, SendImageRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+            return PostTwilioAsync(instance, request.To, request.Caption, request.MediaUrl, null, request.PhoneNumberId, ct);
+
         var image = new Dictionary<string, object> { ["link"] = request.MediaUrl };
         if (!string.IsNullOrWhiteSpace(request.Caption)) image["caption"] = request.Caption!;
 
@@ -123,6 +145,13 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendDocumentAsync(CreatioInstance instance, SendDocumentRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+        {
+            string? body = string.Join(" — ", new[] { request.FileName, request.Caption }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+            return PostTwilioAsync(instance, request.To, body, request.MediaUrl, null, request.PhoneNumberId, ct);
+        }
+
         var document = new Dictionary<string, object> { ["link"] = request.MediaUrl };
         if (!string.IsNullOrWhiteSpace(request.FileName)) document["filename"] = request.FileName!;
         if (!string.IsNullOrWhiteSpace(request.Caption)) document["caption"] = request.Caption!;
@@ -140,6 +169,15 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendLocationAsync(CreatioInstance instance, SendLocationRequest request, CancellationToken ct = default)
     {
+        if (IsTwilio(instance))
+        {
+            string name = string.IsNullOrWhiteSpace(request.Name) ? "Location" : request.Name.Trim();
+            string? label = string.IsNullOrWhiteSpace(request.Address) ? null : request.Address.Trim();
+            string coordinates = $"{request.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)},{request.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            string persistentAction = label == null ? $"geo:{coordinates}" : $"geo:{coordinates}|{label}";
+            return PostTwilioAsync(instance, request.To, name, null, persistentAction, request.PhoneNumberId, ct);
+        }
+
         if (IsKirimDev(instance))
         {
             string mapUrl = $"https://www.google.com/maps/search/?api=1&query={request.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)},{request.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
@@ -181,7 +219,13 @@ public class MetaMessageSender : IMetaMessageSender
 
     public Task<SendResponse> SendCtaAsync(CreatioInstance instance, SendCtaRequest request, CancellationToken ct = default)
     {
-        string displayText = request.ButtonText.Length > 20 ? request.ButtonText[..20] : request.ButtonText;
+        if (IsTwilio(instance))
+        {
+            string body = $"{request.BodyText}\n\n{request.ButtonText}: {request.Url}";
+            return PostTwilioAsync(instance, request.To, body, null, null, request.PhoneNumberId, ct);
+        }
+
+        string displayText = WhatsAppText.Clamp(request.ButtonText, 20);
 
         var payload = new
         {
@@ -206,7 +250,7 @@ public class MetaMessageSender : IMetaMessageSender
     public async Task<SendResponse> ResolveConversationAsync(CreatioInstance instance, string conversationId, CancellationToken ct = default)
     {
         if (!IsKirimDev(instance))
-            return new SendResponse { Success = true, Skipped = true };
+            return new SendResponse { Success = true, Skipped = true, Provider = instance.WhatsAppProvider };
 
         if (string.IsNullOrEmpty(instance.KirimDevPhoneNumberId) || string.IsNullOrEmpty(instance.KirimDevApiKey))
             return new SendResponse { Success = false, Error = "KirimDev phone number ID or API key not configured for this instance" };
@@ -231,7 +275,7 @@ public class MetaMessageSender : IMetaMessageSender
             return new SendResponse { Success = false, Error = $"KirimDev API {(int)response.StatusCode}: {body}" };
         }
 
-        return new SendResponse { Success = true };
+        return new SendResponse { Success = true, Provider = "KirimDev" };
     }
 
     private async Task<SendResponse> PostAsync(CreatioInstance instance, string? overridePhoneNumberId, object payload, CancellationToken ct)
@@ -274,10 +318,94 @@ public class MetaMessageSender : IMetaMessageSender
         }
         catch { }
 
-        await _log.LogAsync(instance.Id, "agent_reply", phoneNumberId, true, $"MetaMessageId: {metaMessageId}");
-        return new SendResponse { Success = true, MetaMessageId = metaMessageId };
+        string provider = useKirimDev ? "KirimDev" : "MetaCloud";
+        await _log.LogAsync(instance.Id, "agent_reply", phoneNumberId, true, $"ProviderMessageId: {metaMessageId}");
+        return new SendResponse
+        {
+            Success = true,
+            Provider = provider,
+            ProviderMessageId = metaMessageId,
+            MetaMessageId = metaMessageId
+        };
+    }
+
+    private async Task<SendResponse> PostTwilioAsync(CreatioInstance instance, string to, string? body,
+        string? mediaUrl, string? persistentAction, string? overrideFrom, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(instance.TwilioAccountSid)
+            || string.IsNullOrWhiteSpace(instance.TwilioAuthToken))
+            return new SendResponse { Success = false, Provider = "Twilio", Error = "Twilio Account SID or Auth Token is not configured for this instance" };
+
+        string from = overrideFrom ?? instance.TwilioWhatsAppFrom;
+        if (string.IsNullOrWhiteSpace(from) && string.IsNullOrWhiteSpace(instance.TwilioMessagingServiceSid))
+            return new SendResponse { Success = false, Provider = "Twilio", Error = "Twilio WhatsApp From or Messaging Service SID is not configured for this instance" };
+
+        var values = new Dictionary<string, string>
+        {
+            ["To"] = NormalizeTwilioAddress(to)
+        };
+        if (!string.IsNullOrWhiteSpace(from)) values["From"] = NormalizeTwilioAddress(from);
+        else values["MessagingServiceSid"] = instance.TwilioMessagingServiceSid;
+        if (!string.IsNullOrWhiteSpace(body)) values["Body"] = body;
+        if (!string.IsNullOrWhiteSpace(mediaUrl)) values["MediaUrl"] = mediaUrl;
+        if (!string.IsNullOrWhiteSpace(persistentAction)) values["PersistentAction"] = persistentAction;
+        if (!string.IsNullOrWhiteSpace(instance.TwilioStatusCallbackUrl))
+            values["StatusCallback"] = instance.TwilioStatusCallbackUrl;
+
+        string url = $"https://api.twilio.com/2010-04-01/Accounts/{Uri.EscapeDataString(instance.TwilioAccountSid)}/Messages.json";
+        string basicToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{instance.TwilioAccountSid}:{instance.TwilioAuthToken}"));
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Basic", basicToken) },
+            Content = new FormUrlEncodedContent(values)
+        };
+
+        var http = _httpClientFactory.CreateClient("meta");
+        var response = await http.SendAsync(request, ct);
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string safeBody = responseBody[..Math.Min(300, responseBody.Length)];
+            _logger.LogError("Twilio API error {Status}: {Body}", response.StatusCode, responseBody);
+            await _log.LogAsync(instance.Id, "error_meta", TwilioWebhookParser.NormalizeWhatsAppAddress(to), false,
+                $"Twilio API {(int)response.StatusCode}: {safeBody}");
+            return new SendResponse { Success = false, Provider = "Twilio", Error = $"Twilio API {(int)response.StatusCode}: {responseBody}" };
+        }
+
+        string? messageSid = null;
+        try
+        {
+            messageSid = JsonNode.Parse(responseBody)?["sid"]?.GetValue<string>();
+        }
+        catch { }
+
+        await _log.LogAsync(instance.Id, "agent_reply", TwilioWebhookParser.NormalizeWhatsAppAddress(to), true,
+            $"ProviderMessageId: {messageSid}");
+        return new SendResponse
+        {
+            Success = true,
+            Provider = "Twilio",
+            ProviderMessageId = messageSid,
+            MetaMessageId = messageSid
+        };
+    }
+
+    private static string BuildTwilioOptionsText(string body, IEnumerable<string> options) =>
+        $"{body}\n\n{string.Join("\n", options)}".Trim();
+
+    private static string NormalizeTwilioAddress(string value)
+    {
+        string normalized = value.Trim();
+        if (normalized.StartsWith("whatsapp:", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized["whatsapp:".Length..];
+        normalized = normalized.StartsWith('+') ? normalized : $"+{normalized}";
+        return $"whatsapp:{normalized}";
     }
 
     private static bool IsKirimDev(CreatioInstance instance) =>
         string.Equals(instance.WhatsAppProvider, "KirimDev", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTwilio(CreatioInstance instance) =>
+        string.Equals(instance.WhatsAppProvider, "Twilio", StringComparison.OrdinalIgnoreCase);
 }

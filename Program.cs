@@ -26,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(opt =>
 // Services
 builder.Services.AddScoped<IInstanceService, InstanceService>();
 builder.Services.AddScoped<IMetaWebhookParser, MetaWebhookParser>();
+builder.Services.AddScoped<ITwilioWebhookParser, TwilioWebhookParser>();
 builder.Services.AddScoped<ICreatioForwarder, CreatioForwarder>();
 builder.Services.AddScoped<IMetaMessageSender, MetaMessageSender>();
 builder.Services.AddScoped<IKirimDevConversationService, KirimDevConversationService>();

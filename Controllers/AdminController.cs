@@ -124,6 +124,11 @@ public class AdminController : ControllerBase
             KirimDevApiKey = dto.KirimDevApiKey ?? "",
             KirimDevPhoneNumberId = dto.KirimDevPhoneNumberId ?? "",
             KirimDevWebhookSecret = dto.KirimDevWebhookSecret ?? "",
+            TwilioAccountSid = dto.TwilioAccountSid ?? "",
+            TwilioAuthToken = dto.TwilioAuthToken ?? "",
+            TwilioWhatsAppFrom = dto.TwilioWhatsAppFrom ?? "",
+            TwilioMessagingServiceSid = dto.TwilioMessagingServiceSid ?? "",
+            TwilioStatusCallbackUrl = dto.TwilioStatusCallbackUrl ?? "",
             IsActive = dto.IsActive
         }, ct);
         return Redirect("/admin/instances");
@@ -158,6 +163,11 @@ public class AdminController : ControllerBase
         instance.KirimDevApiKey = dto.KirimDevApiKey ?? instance.KirimDevApiKey;
         instance.KirimDevPhoneNumberId = dto.KirimDevPhoneNumberId ?? instance.KirimDevPhoneNumberId;
         instance.KirimDevWebhookSecret = dto.KirimDevWebhookSecret ?? instance.KirimDevWebhookSecret;
+        instance.TwilioAccountSid = dto.TwilioAccountSid ?? instance.TwilioAccountSid;
+        if (!string.IsNullOrWhiteSpace(dto.TwilioAuthToken)) instance.TwilioAuthToken = dto.TwilioAuthToken;
+        instance.TwilioWhatsAppFrom = dto.TwilioWhatsAppFrom ?? instance.TwilioWhatsAppFrom;
+        instance.TwilioMessagingServiceSid = dto.TwilioMessagingServiceSid ?? instance.TwilioMessagingServiceSid;
+        instance.TwilioStatusCallbackUrl = dto.TwilioStatusCallbackUrl ?? instance.TwilioStatusCallbackUrl;
         instance.IsActive = dto.IsActive;
 
         await _instances.UpdateAsync(instance, ct);
@@ -208,8 +218,12 @@ public class AdminController : ControllerBase
         Convert.ToBase64String(Guid.NewGuid().ToByteArray())
             .Replace("+", "").Replace("/", "").Replace("=", "")[..16];
 
-    private static string NormalizeWhatsAppProvider(string? provider) =>
-        string.Equals(provider, "KirimDev", StringComparison.OrdinalIgnoreCase) ? "KirimDev" : "MetaCloud";
+    private static string NormalizeWhatsAppProvider(string? provider) => provider?.Trim().ToLowerInvariant() switch
+    {
+        "kirimdev" => "KirimDev",
+        "twilio" => "Twilio",
+        _ => "MetaCloud"
+    };
 
     private static string H(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
 
@@ -420,7 +434,7 @@ button:hover{background:#6d28d9}
                       <td><strong>{H(i.Name)}</strong></td>
                       <td><span class="mono">{H(i.ApiKey)}</span></td>
                       <td>{H(i.CreatioBaseUrl)}</td>
-                      <td><span class="badge badge-blue">{H(provider == "KirimDev" ? "KirimDev" : "Meta")}</span></td>
+                      <td><span class="badge badge-blue">{H(provider == "MetaCloud" ? "Meta" : provider)}</span></td>
                       <td>{status}</td>
                       <td>
                         <a href="/admin/instances/{i.Id}/edit" class="btn btn-secondary btn-sm">Edit</a>
@@ -461,16 +475,20 @@ button:hover{background:#6d28d9}
         string provider = NormalizeWhatsAppProvider(inst?.WhatsAppProvider);
         string selMeta = provider == "MetaCloud" ? "selected" : "";
         string selKirimDev = provider == "KirimDev" ? "selected" : "";
+        string selTwilio = provider == "Twilio" ? "selected" : "";
         const string providerToggleScript = """
             <script>
             (function(){
               var provider = document.getElementById('whatsapp-provider');
               var meta = document.getElementById('meta-config');
               var kirimdev = document.getElementById('kirimdev-config');
+              var twilio = document.getElementById('twilio-config');
               function syncProviderConfig(){
                 var useKirimDev = provider.value === 'KirimDev';
-                meta.classList.toggle('hidden', useKirimDev);
+                var useTwilio = provider.value === 'Twilio';
+                meta.classList.toggle('hidden', useKirimDev || useTwilio);
                 kirimdev.classList.toggle('hidden', !useKirimDev);
+                twilio.classList.toggle('hidden', !useTwilio);
               }
               provider.addEventListener('change', syncProviderConfig);
               syncProviderConfig();
@@ -534,6 +552,7 @@ button:hover{background:#6d28d9}
                 <select id="whatsapp-provider" name="WhatsAppProvider">
                   <option value="MetaCloud" {selMeta}>Meta Cloud API</option>
                   <option value="KirimDev" {selKirimDev}>KirimDev</option>
+                  <option value="Twilio" {selTwilio}>Twilio</option>
                 </select>
               </div>
             </div>
@@ -569,6 +588,34 @@ button:hover{background:#6d28d9}
                   <label>Webhook Secret</label>
                   <input name="KirimDevWebhookSecret" value="{H(inst?.KirimDevWebhookSecret)}" placeholder="Secret dari webhook subscription">
                 </div>
+              </div>
+            </div>
+            <div id="twilio-config" class="card">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">Twilio WhatsApp Configuration</div>
+              <div class="form-row">
+                <div class="input-group">
+                  <label>Account SID</label>
+                  <input name="TwilioAccountSid" value="{H(inst?.TwilioAccountSid)}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                </div>
+                <div class="input-group">
+                  <label>Auth Token</label>
+                  <input type="password" name="TwilioAuthToken" placeholder="{(isEdit ? "Leave blank to keep current" : "Twilio Auth Token")}">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="input-group">
+                  <label>WhatsApp From</label>
+                  <input name="TwilioWhatsAppFrom" value="{H(inst?.TwilioWhatsAppFrom)}" placeholder="+14155238886">
+                </div>
+                <div class="input-group">
+                  <label>Messaging Service SID (optional)</label>
+                  <input name="TwilioMessagingServiceSid" value="{H(inst?.TwilioMessagingServiceSid)}" placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                </div>
+              </div>
+              <div class="input-group">
+                <label>Status Callback URL (optional)</label>
+                <input name="TwilioStatusCallbackUrl" value="{H(inst?.TwilioStatusCallbackUrl)}" placeholder="https://chatbridge.example.com/webhook/{H(inst?.ApiKey)}">
+                <small>Use the same public webhook URL to receive sent, delivered, read, and failed updates.</small>
               </div>
             </div>
             <div style="display:flex;gap:10px">
@@ -679,6 +726,11 @@ public class InstanceFormDto
     public string? KirimDevApiKey { get; set; }
     public string? KirimDevPhoneNumberId { get; set; }
     public string? KirimDevWebhookSecret { get; set; }
+    public string? TwilioAccountSid { get; set; }
+    public string? TwilioAuthToken { get; set; }
+    public string? TwilioWhatsAppFrom { get; set; }
+    public string? TwilioMessagingServiceSid { get; set; }
+    public string? TwilioStatusCallbackUrl { get; set; }
     public bool IsActive { get; set; } = true;
 }
 

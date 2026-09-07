@@ -224,6 +224,7 @@ Choose the provider for each instance:
 |----------|----------|
 | `Meta Cloud API` | You connect directly to Meta and manage the WABA, token, phone number, and webhook yourself |
 | `KirimDev` | You connect the WhatsApp number in KirimDev and use KirimDev API keys/webhooks |
+| `Twilio` | You use a Twilio WhatsApp Sender or Messaging Service through Programmable Messaging |
 
 **Meta Cloud API Configuration**
 
@@ -240,6 +241,16 @@ Choose the provider for each instance:
 | API Key | KirimDev API key from the dashboard | `kdv_live_xxxxx...` |
 | Phone Number ID | Connected WhatsApp phone number ID from KirimDev | `106540352242922` |
 | Webhook Secret | Secret returned when creating the KirimDev webhook subscription | `whsec_xxxxx...` |
+
+**Twilio Configuration**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| Account SID | Twilio account identifier | `ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
+| Auth Token | Twilio Auth Token, also used to validate webhook signatures | `••••••••` |
+| WhatsApp From | Approved Twilio WhatsApp sender in E.164 format | `+14155238886` |
+| Messaging Service SID | Optional alternative to WhatsApp From | `MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
+| Status Callback URL | Optional callback for delivery/read statuses | `https://your-domain.com/webhook/{apiKey}` |
 
 4. Click **Create Instance**
 5. Copy the **API Key** — it will be used in all URLs for this instance
@@ -263,6 +274,16 @@ https://your-domain.com/webhook/{apiKey}
 ```
 
 Subscribe to message received/status events. KirimDev `X-Kirim-Source: meta` webhook bodies are parsed using the same Meta webhook parser.
+
+For Twilio, set the sender's **When a message comes in** webhook to:
+
+```
+https://your-domain.com/webhook/{apiKey}
+```
+
+Use `POST`. ChatBridge validates `X-Twilio-Signature` with the configured Auth Token. If HTTPS is terminated by a reverse proxy, it must forward `X-Forwarded-Proto` and `X-Forwarded-Host`. Set the same URL as **Status Callback URL** to receive sent, delivered, read, and failed updates.
+
+Twilio text, media, and location messages are sent through Programmable Messaging. Dynamic ChatBridge buttons and lists are rendered as numbered text, and CTA buttons as text plus URL, so the existing Creatio chat-tree matching keeps working without provisioning a Twilio Content Template for every node. Free-form outbound WhatsApp messages remain subject to WhatsApp's customer-service window; business-initiated messages outside that window require approved Twilio Content Templates.
 
 ### 5.5 Logs
 
@@ -382,10 +403,14 @@ Content-Type: application/json
 ```json
 {
   "success": true,
+  "provider": "MetaCloud",
+  "providerMessageId": "wamid.xxx",
   "metaMessageId": "wamid.xxx",
   "error": null
 }
 ```
+
+`metaMessageId` is retained as a backward-compatible alias. For Twilio, both ID fields contain the Twilio Message SID (`SM...`).
 
 ---
 
